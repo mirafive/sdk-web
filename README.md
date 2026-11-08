@@ -1,332 +1,259 @@
-# @mirafive/sdk-browser
+# @mirafive/web
 
-The browser SDK of MIRA FIVE: privacy-first analytics for
-websites and web apps, hosted in the EU, with one small import per feature.
+The MIRA FIVE browser SDK: consent-aware analytics and revenue attribution for websites and web
+apps. It follows the site's consent banner on its own, works cookieless until consent is given,
+captures pageviews (also in single-page apps), engagement, outbound clicks, downloads and form
+submits, and never throws into your page. About 8 kB gzip with every consent adapter; no
+dependencies besides `@mirafive/protocol`.
 
-## Size
-
-| Import | min + gzip |
-|---|---|
-| `@mirafive/sdk-browser` (`createMira`) | 2.48 kB |
-| `…` + `@mirafive/sdk-browser/pageviews` | 2.76 kB |
-| `@mirafive/sdk-browser/identity` | 1.13 kB |
-| `@mirafive/sdk-browser/autocapture` | 0.86 kB |
-| `@mirafive/sdk-browser/search` | 0.40 kB |
-| everything together | 4.60 kB |
-
-What you do not import is not shipped (`sideEffects: false`, one entry per feature).
-A consentless site with automatic pageviews ships 2.76 kB. Each plugin row is measured
-on its own, as a bundler adds it to a page that already has the core.
+Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),
+[`@mirafive/next`](https://github.com/mirafive/sdk-next),
+[`@mirafive/tanstack`](https://github.com/mirafive/sdk-tanstack),
+[`@mirafive/vue`](https://github.com/mirafive/sdk-vue),
+[`@mirafive/nuxt`](https://github.com/mirafive/sdk-nuxt) and
+[`@mirafive/astro`](https://github.com/mirafive/sdk-astro) wrap this package. Server events and
+revenue come from [`@mirafive/node`](https://github.com/mirafive/sdk-node) or
+[PHP](https://github.com/mirafive/sdk-php).
 
 ## Install
 
+### Script tag
+
+```html
+<script>
+  window.mira =
+    window.mira ||
+    function () {
+      (mira.q = mira.q || []).push(arguments);
+    };
+</script>
+<script
+  async
+  src="https://cdn.mirafive.io/sdk/mira.js"
+  data-host="https://events.mirafive.io"
+  data-key="mira_pk_…"
+></script>
+```
+
+The inline script is a stub: calls such as `mira('track', 'signup_started')` made before the SDK has
+loaded are queued and replayed in order.
+
+| Attribute          | Default                 | Meaning                                                                                    |
+| ------------------ | ----------------------- | ------------------------------------------------------------------------------------------ |
+| `data-key`         | (required)              | The project's public key                                                                   |
+| `data-host`        | the script's own origin | Ingest origin. Serve the script through your own domain and events go there too.           |
+| `data-consent`     | `auto`                  | `auto` (follow the CMP), `granted`, `denied`, or `analytics` (analytics yes, marketing no) |
+| `data-autocapture` | `true`                  | `false` turns off all automatic events                                                     |
+| `data-spa`         | `true`                  | `false` turns off pageviews on client-side navigation                                      |
+| `data-engagement`  | `true`                  | `false` turns off `$engagement`                                                            |
+| `data-outbound`    | `true`                  | `false` turns off `$outbound_click`                                                        |
+| `data-downloads`   | `true`                  | `false` turns off `$file_download`                                                         |
+| `data-forms`       | `true`                  | `false` turns off `$form_submit`                                                           |
+
+```js
+mira("track", "signup_started", { plan: "pro" });
+mira("identify", "user_42", { email: "ada@example.com", plan: "pro" });
+// The same person in other systems, so connectors can link their money to this user:
+mira("identify", "user_42", {}, { externalIds: { stripe_customer: "cus_123" } });
+mira("group", "acme", { name: "Acme GmbH" });
+mira("survey", { source: "podcast", answer: "The Elternzeit podcast" }); // "How did you hear about us?"
+mira("page"); // manual pageview
+mira("page", { status: 404 }); // on your not-found page: marks the page view as a 404
+mira("setLocation", { latitude: 52.52, longitude: 13.4 }); // a location your site already has
+mira("setLocation", null); // forget it
+mira("consent", { analytics: true, marketing: false }); // custom banners
+mira("consent", "auto"); // follow the CMP again
+mira("reset"); // on logout
+mira("flush"); // send now
+```
+
+### npm
+
 ```sh
-npm install @mirafive/sdk-browser
-# or: bun add / pnpm add / yarn add
+npm install @mirafive/web   # or: bun add, pnpm add, yarn add
 ```
-
-No dependencies. ES2022 browsers (every evergreen browser; Safari ≥ 15.4). ESM only.
-
-## Quickstart
 
 ```ts
-import { createMira } from "@mirafive/sdk-browser"
-import { pageviews } from "@mirafive/sdk-browser/pageviews"
+import { createMira } from "@mirafive/web";
 
-const mira = createMira({
-  key: import.meta.env.VITE_MIRAFIVE_KEY, // the source's website key, mf_…
-  plugins: [pageviews()]
-})
+export const mira = createMira({
+  key: "mira_pk_…",
+  host: "https://events.mirafive.io", // default
+  consent: "auto", // or { analytics, marketing }
+  // Default: everything on. `autocapture: false` turns everything off.
+  autocapture: {
+    pageviews: true,
+    spa: true,
+    engagement: true,
+    outbound: true,
+    downloads: true,
+    forms: true,
+  },
+});
 
-mira.track("signup", { plan: "pro" })
+mira.track("signup_started", { plan: "pro" });
+await mira.flush();
 ```
 
-For revenue, send `revenue`, `currency` and `payment_id`, the payment provider's id (1–255
-characters). On a Stripe success page pass the Checkout Session id, for example
-`mira.track("order completed", { revenue: 49, currency: "EUR", payment_id: sessionId })`.
-MIRA FIVE merges the event with the payment it imports from your connected Stripe account,
-so the sale counts once.
+To keep the bundle smaller, pass only the CMP adapters you need:
+`createMira({ key, adapters: [cookiebot] })` (`import { cookiebot } from "@mirafive/web"`).
 
-Verify it: open the site (not `localhost`, or pass `trackLocalhost: true`), then look
-for `POST https://collect.mirafive.io/v1/batch/mf_…` in the browser's network tab
-answering `202` with `"accepted": 1`, and for the pageview in the source's live view in
-MIRA FIVE.
+### Typed events
 
-## Consent & privacy
-
-- **Default mode: `consentless`.** Identifier-free and needs no consent banner: no
-  cookies, no storage, no ids, and the SDK never reads the browser's language, time
-  zone or screen size (the tests spy on every one of them). A batch carries the SDK
-  name, the page (URL with only campaign and click-id parameters, title, referrer) and
-  your event properties.
-- **`mode: "full"`** adds an anonymous id, a session id, your user id, and locale, time
-  zone and screen size, and unlocks site search. It
-  needs `identity()` and a consent answer; before the answer nothing is sent or stored.
-  Put it behind your consent management platform (CMP).
-- Pass the answer with `mira.consent(…)`:
-  - `consent(true)`: statistics only.
-  - `consent({ statistics })`: statistics is the only purpose; a key you leave
-    out keeps its last answer. The `experiments` and `targeting` keys from older
-    integrations are accepted and ignored; neither counts as consent.
-  - `consent(false)`: forgets the ids and the user, clears the queue.
-  - Events before statistics consent are dropped, `$identify` included: call
-    `identify()` again after the grant (the user id is kept in memory and stamped on
-    later events, but the `$identify` event itself is not replayed).
-  - A CMP that knows the stored answer before the SDK loads sets
-    `window.__mirafive_consent = { statistics }` (or `false`)
-    first; the SDK applies it at start, so the landing pageview is counted with the
-    answer (`$boot: 1`).
-- The landing pageview is sent when consent is first granted, so a visitor who accepts
-  on the first page still counts that page.
-- Do Not Track, Global Privacy Control, `window.__mirafive_ignore = true` (for the site
-  owner's own visits) and prerendering send nothing; a prerendered page sends once it
-  is shown. `localhost`, `127.*`, `[::1]`, `*.local` and `file:` send nothing unless
-  `trackLocalhost: true`.
-- Full mode stores, in `localStorage` only (never cookies), `mirafive:{namespace}:aid`
-  (anonymous id, 365 days since last seen), `:sid` (session, 30 minutes idle) and
-  `:uid` (a hash of the user id, to notice a different person signing in). The
-  namespace is the key without its last `_…` part.
-
-Wiring common CMPs (statistics is the usual "analytics" category):
+Pass your events once and get autocomplete and checks for every `track` call:
 
 ```ts
-// Cookiebot
-window.addEventListener("CookiebotOnConsentReady", () => {
-  const { statistics } = Cookiebot.consent
-  mira.consent({ statistics })
-})
+type Events = {
+  signup_started: { plan: "free" | "pro" };
+  report_exported: { format: "csv" | "pdf" };
+};
 
-// OneTrust (default group id: C0002 performance)
-window.OptanonWrapper = () => {
-  const groups = window.OnetrustActiveGroups ?? ""
-  mira.consent({ statistics: groups.includes(",C0002,") })
-}
-
-// Any CMP with a callback
-myCmp.onChange((choices) => mira.consent({ statistics: choices.analytics }))
+export const mira = createMira<Events>({ key: "mira_pk_…" });
+mira.track("signup_started", { plan: "pro" }); // ✓
+mira.track("signup_started", { plan: "gold" }); // type error
 ```
 
-## API reference
+### "How did you hear about us?"
+
+A survey answer is a touchpoint the attribution models credit like a visit:
 
 ```ts
-import { createMira } from "@mirafive/sdk-browser"
-import type { Mira, MiraCore, MiraOptions, Plugin, ConsentAnswer } from "@mirafive/sdk-browser"
-import { pageviews } from "@mirafive/sdk-browser/pageviews"
-import { identity } from "@mirafive/sdk-browser/identity" // required for mode "full"
-import { autocapture } from "@mirafive/sdk-browser/autocapture"
-import { siteSearch } from "@mirafive/sdk-browser/search"
+mira.survey({ source: "podcast", answer: "The Elternzeit podcast" });
+mira.survey({ channel: "organic_social", source: "instagram" });
 ```
 
-`createMira<Events>(options): Mira<Events>`
+### Joining server events to the visit
 
-| Option | Default | |
-|---|---|---|
-| `key` | required | the source's website key |
-| `host` | `https://collect.mirafive.io` | must have a scheme |
-| `mode` | `"consentless"` | `"full"` needs `identity()` |
-| `plugins` | `[]` | |
-| `flushAt` | `20` | send once this many events are queued, 1–1000 (each batch also stays under ~48 KB) |
-| `flushAfterMs` | `5000` | send this long after the first queued event, 50–300000 |
-| `trackLocalhost` | `false` | |
-
-`createMira` throws a `TypeError` for a `secretKey` option (secret keys are
-server-only), a host without a scheme, and `mode: "full"` without `identity()`.
-Nothing else throws; transport problems are dropped with a warning in development.
-
-| Member | Plugin | |
-|---|---|---|
-| `track(name, properties?)` | core | queue an event; names starting with `$` are reserved |
-| `pageview(page?: { url?, title?, referrer? } \| null)` | core | queue `$pageview` for the current or given page |
-| `flush(): Promise<void>` | core | send now |
-| `use(plugin)` | core | add a plugin after creation |
-| `destroy()` | core | stop timers and listeners, undo patches, drop the queue |
-| `consent(answer: boolean \| { statistics? })` | identity | see above; `experiments` and `targeting` keys are accepted and ignored |
-| `identify(userId, traits?)` | identity | `$identify`, then `userId` on later events; a different user starts fresh ids; ids are 1–256 characters (numbers are turned into strings) |
-| `reset()` | identity | forget ids, user and session |
-| `anonymousId(): string \| undefined` | identity | for linking server-side events; `undefined` without statistics consent |
-| `search(query)` | search | queue `$search` |
-
-A member whose plugin is missing warns once in development and does nothing.
-
-Typed events are types only:
+Server events (a paid invoice, a confirmed order) belong to the visitor who caused them. Send the
+browser's anonymous id along, and set it as `anonymousId` on the server event:
 
 ```ts
-const mira = createMira<{ signup: { plan: string }; logout: undefined }>({ key })
-mira.track("signup", { plan: "pro" }) // checked
+await fetch("/api/checkout", {
+  method: "POST",
+  body: JSON.stringify({ cart, anonymousId: mira.anonymousId }),
+});
 ```
 
-Plugins:
+`mira.anonymousId` is `undefined` without analytics consent; the event then counts without being
+linked to the visit.
 
-- `pageviews({ hash?, initial? })`: the landing pageview (a microtask after creation,
-  unless `initial: false`) and every same-document navigation, for any SPA router:
-  the Navigation API's `navigatesuccess`, else patched `pushState`/`replaceState` and
-  `popstate`; `hashchange` and the fragment only with `hash: true`. The title is read
-  one macrotask after a navigation. The same path and query twice is one view. After
-  the first view the referrer is the previous page.
-- `identity()`: consent, ids and the user (mode `"full"`).
-- `autocapture({ selectorAttributes? })`: `$autocapture` for clicks, submits and
-  changes on `a, button, input, select, textarea` and elements with a button, link, tab
-  or menuitem role: tag, a short selector, id and classes (generated names skipped),
-  the label text of links and buttons, the cleaned `href`, `name`, `type`, and
-  `data-testid`/`data-test`/`data-cy`/`data-qa`/`data-track` plus your
-  `selectorAttributes`. Never what was typed; nothing for password, email or hidden
-  inputs or under `[data-mira-no-capture]`. Works in both modes.
-- `siteSearch({ parameters? })`: `$search` from `q`, `s`, `search` or `query` in the
-  page URL (read before cleaning), sent after 1 s without a change, or when the visitor
-  moves on or leaves; plus `mira.search(query)`. Mode `"full"`, after consent.
+## API
 
-## Writing a plugin
+| Member                                                       | What it does                                                                                                                                                                                    |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createMira<Events>(options?)`                               | Creates the client. Without options, call `init(options)` later; calls before that are kept.                                                                                                    |
+| `track(name, properties?)`                                   | A custom event. Names starting with `$` are reserved.                                                                                                                                           |
+| `page(properties?)`                                          | A manual pageview, for example `{ status: 404 }`.                                                                                                                                               |
+| `identify(userId, traits?, { externalIds }?)`                | Who the user is. Traits like `email` are encrypted at rest. `externalIds` (`stripe_customer`, `revenuecat_app_user`, `shopify_customer`, `shopware_customer`) link connector money to the user. |
+| `group(groupId, traits?)`                                    | The company or account (B2B).                                                                                                                                                                   |
+| `survey({ source \| channel, answer?, medium?, campaign? })` | A survey answer as a touchpoint.                                                                                                                                                                |
+| `consent("auto" \| { analytics, marketing })`                | Follow the CMP, or set the state from a custom banner.                                                                                                                                          |
+| `setLocation({ latitude, longitude } \| null)`               | A location the site already has, rounded to about 1 km, only with consent.                                                                                                                      |
+| `reset()`                                                    | On logout: forgets the user and starts a new anonymous id.                                                                                                                                      |
+| `flush()`                                                    | Sends now. Resolves when done; never rejects.                                                                                                                                                   |
+| `status`                                                     | The consent the SDK works with (`{ analytics, marketing }`).                                                                                                                                    |
+| `anonymousId`                                                | The visitor's id with analytics consent, else `undefined`.                                                                                                                                      |
+| `createNoopMira()`                                           | A client that does nothing, for tests and server rendering.                                                                                                                                     |
+| `eventIdFor(key)`                                            | A stable event id from your own key (`order:123:paid`).                                                                                                                                         |
 
-A plugin is `{ name, setup(core) }`; `setup` may return a teardown that `destroy()`
-runs. Plugins given to `createMira` are set up in order during creation; `use()` sets
-one up at any later time, so the tracker can load a feature chunk when it is needed.
+`createMira` refuses a secret key (`mira_sk_…`): it logs an error, even without `debug`, and
+sends nothing.
 
-```ts
-import type { Plugin } from "@mirafive/sdk-browser"
+## Automatic events
 
-export const outboundLinks = (): Plugin => ({
-  name: "outbound-links",
-  setup(core) {
-    const onClick = (event: MouseEvent) => {
-      const link = (event.target as Element | null)?.closest("a")
+| Event             | When                                                                              | Properties                                                                    |
+| ----------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `$pageview`       | On load and on each client-side navigation                                        | Your own, through `mira('page', …)`                                           |
+| `$engagement`     | When the person leaves a page (next SPA page, tab hidden, page closed); not < 1 s | `engaged_ms` (time the page was visible), `scroll_depth` (0, 25, 50, 75, 100) |
+| `$outbound_click` | A click on a link to another site (`www.` does not count as another site)         | `url` (origin and path, no query or hash), `domain`                           |
+| `$file_download`  | A click on a link to a file (PDF, ZIP, CSV, …) or with a `download` attribute     | `url` (origin and path), `extension`                                          |
+| `$form_submit`    | A form is submitted                                                               | `form_id`, `form_name`, `action` (path only). **Never field values.**         |
 
-      if (link && link.host !== location.host) {
-        core.send("outbound link", { host: link.host }, { url: core.clean(location.href) })
-      }
-    }
+These events describe the page, not the device, so they are sent at every tier (T0 too). If a
+person comes back to a hidden tab, the next `$engagement` carries only the time since the last
+one, so `engaged_ms` adds up per page view.
 
-    document.addEventListener("click", onClick, true)
-    core.expose({ outbound: (host: string) => core.send("outbound link", { host }) })
+## What is collected at each consent tier
 
-    return () => document.removeEventListener("click", onClick, true)
-  }
-})
-```
+|                                                        | T0: no analytics consent (`unknown`, `denied`)  | T1: analytics consent                                                               | T2: T1 + `identify` | T3: + marketing consent |
+| ------------------------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------- | ----------------------- |
+| Device storage (cookies, localStorage, sessionStorage) | **never read or written**                       | `mira_aid`, `mira_uid`, `mira_gid`, and the unsent queue (`mira_q`) in localStorage | same                | same                    |
+| `anonymous_id`                                         | no                                              | yes (UUIDv7)                                                                        | yes                 | yes                     |
+| `user_id`, `group_id`, traits                          | no (kept in memory, sent once consent is given) | no `user_id` until `identify`                                                       | yes                 | yes                     |
+| `session_id`                                           | no (sessions are made by the server)            | no                                                                                  | no                  | no                      |
+| Page URL, referrer, title                              | yes                                             | yes                                                                                 | yes                 | yes                     |
+| Locale                                                 | 2 letters (`de`), like `Accept-Language`        | full (`de-DE`)                                                                      | full                | full                    |
+| Screen, viewport, pixel ratio, languages, time zone    | no                                              | yes                                                                                 | yes                 | yes                     |
+| Client hints (device model, OS version)                | no (never asked for)                            | yes, asked once after consent                                                       | yes                 | yes                     |
+| Location from `setLocation`                            | no (kept in memory only)                        | yes, rounded to 2 decimals                                                          | yes                 | yes                     |
+| External ids (`identify` options)                      | no (kept in memory, sent once consent is given) | with `identify`                                                                     | yes                 | yes                     |
+| `consent` stamp on every event                         | yes                                             | yes                                                                                 | yes                 | yes                     |
+| Click ids kept by the server                           | no                                              | no                                                                                  | no                  | yes                     |
 
-`MiraCore`, the surface a plugin gets:
+IP and user agent are request data. The server turns the IP into geo at ingest and discards it.
 
-| Member | |
-|---|---|
-| `options` | the options as given, `host` and `mode` resolved |
-| `state` | shared state (below); plugins write only the parts they own |
-| `client` | the `Mira` the site holds |
-| `send(name, properties?, page?)` | queue an event; opt-outs, the full-mode gate and `beforeSend` apply |
-| `expose(methods)` | put methods on the client, replacing stubs of the same name |
-| `on(hook, listener): () => void` | subscribe to a hook |
-| `emit(hook, argument?)` | run a hook; `false` when a listener returned `false` |
-| `ready(run)` | run in a microtask: after every plugin given at creation is set up |
-| `flush(unload?)`, `clear()` | send the queue; empty it, the hold buffer and pending retries |
-| `hold()`, `release(keep)` | hold events while waiting for identity (below) |
-| `clean(url)` | the URL cleaned as pageviews are |
-| `cut(text, max)` | cut text without splitting a surrogate pair (use it for every cut) |
-| `uuid()`, `warn(message)`, `optedOut()` | a v4 UUID; a development warning (once); DNT, GPC, ignore or prerendering |
+**Consent changes take effect on the next event, without a reload.** When analytics consent is
+granted in the middle of a visit, the SDK creates the `anonymous_id` and sends `$consent_changed`;
+the server links the cookieless session to it, so the visit keeps its source. When consent is
+revoked, the SDK deletes everything it stored and is cookieless again. Marketing consent only
+changes the stamp.
 
-| Hook | Argument | When |
-|---|---|---|
-| `beforeSend` | the event, change it in place; return `false` to drop it | as each event is queued |
-| `pageview` | the page URL before cleaning | after each pageview |
-| `consent` | the consent answer | after each answer (identity) |
-| `user` | none | after `identify()` and `reset()` (identity) |
-| `flush` | none | before each flush, including the one on page hide |
+**Global Privacy Control:** if `navigator.globalPrivacyControl` is `true`, marketing is treated as
+denied. GPC is a legally binding opt-out of selling or sharing in several US states, and marketing
+consent exists to share data with ad platforms. Analytics stays the CMP's decision. Do Not Track is
+not read: it has no legal weight, and the CMP is where the person decides.
 
-| `state` | Owner | |
-|---|---|---|
-| `mode` | identity | the mode batches are sent in: `"full"` only while statistics consent holds |
-| `context` | core | sent with every batch; framework packages leave `sdk` unchanged (the hosted tracker sets its own name) |
-| `hash` | pageviews | hash routing |
-| `page` | core | the last pageview's page, sent or not |
-| `dropped` | core | the last pageview dropped for want of consent (never a held one); identity resends it on the grant |
-| `consent`, `boot`, `user`, `aid()` | identity | the answer, `$boot`, the user, the anonymous id (minted on first use, only with a consent scope) |
+## Consent banners (`consent: 'auto'`)
 
-In mode `"full"` the core sends nothing until `state.mode` is `"full"`, whichever
-plugins are present. `createMira` checks for a plugin *named* `"identity"`: a loader
-that fetches identity later passes a placeholder `{ name: "identity", setup() {} }` and
-calls `use(identity())` when the chunk arrives; the landing pageview is then resent on
-the first grant and a pre-set `window.__mirafive_consent` still counts as `$boot: 1`.
+The SDK looks for these CMPs in this order and follows the first one it finds. Until the CMP
+answers, the state is `unknown` (T0). The first automatic pageview waits up to 1 s for that answer,
+so a returning visitor's pageview already carries their consent.
 
-Between a consent grant and identity arriving, call `core.hold()`: events (pageviews,
-autocapture, `track`) are then kept in a buffer of at most 100 instead of dropped.
-identity releases the buffer when it applies an answer: with statistics consent the
-events are queued with their original times and the new ids; otherwise they are
-dropped. Only the page viewed before holding began is resent, so a navigation during the
-hold, or a landing pageview that was itself held, counts once. `core.release(keep)`
-ends holding by hand. Without `hold()` events before the
-grant are dropped as usual (the landing pageview is resent either way).
+| CMP                               | Read through                                                                     | Mapping                                                                                                                                                                                                             |
+| --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Usercentrics v3                   | `__ucCmp.getConsentDetails()`, `UC_CONSENT` event                                | A service named "MIRA FIVE" decides both. Otherwise a `statistics`/`analytics`/`performance` category → analytics (else analytics follows `marketing`); `marketing` → marketing. `IMPLICIT` consent = not answered. |
+| Usercentrics v2                   | `UC_UI.getServicesBaseInfo()`, `UC_UI_INITIALIZED`, `UC_UI_CMP_EVENT`, `ucEvent` | Same as v3                                                                                                                                                                                                          |
+| Cookiebot                         | `Cookiebot.consent`, `CookiebotOnConsentReady` / `OnAccept` / `OnDecline`        | statistics → analytics, marketing → marketing; no `hasResponse` = not answered                                                                                                                                      |
+| consentmanager                    | `__cmp('getCMPData')`, `__cmp('addEventListener', ['consent', …])`               | TCF purposes as below; classic setups: c53 → analytics, c52 → marketing (check your purpose ids)                                                                                                                    |
+| CCM19                             | `CCM.acceptedEmbeddings`, `ccm19WidgetClosed`                                    | Add MIRA FIVE as an embedding: accepted → analytics. A second embedding "MIRA FIVE Marketing" → marketing.                                                                                                          |
+| Borlabs Cookie 3                  | `BorlabsCookie.Consents`, `borlabs-cookie-consent-saved`                         | `statistics` group (or a `mira-five` service) → analytics, `marketing` group → marketing                                                                                                                            |
+| Any TCF 2.2 CMP                   | `__tcfapi('addEventListener', 2, …)`                                             | analytics: purpose 1 and 8 or 9. marketing: purposes 1, 2, 3, 4 and 7. `gdprApplies: false` → both granted.                                                                                                         |
+| Google Consent Mode v2 (fallback) | `gtag('consent', …)` commands in `dataLayer`                                     | `analytics_storage` → analytics; `ad_storage` and `ad_user_data` → marketing. A `default` of denied without an update = not answered. Used only after page load when no CMP was found.                              |
 
-## Framework / runtime notes
+## Delivery
 
-- Create one client per page, in the browser only (not during SSR). A second
-  `createMira` while one is running stays inert and warns in development; `destroy()`
-  releases the page, so React StrictMode's mount, unmount and mount works.
-- For React, Next.js, Vue, Nuxt, Astro and TanStack use the MIRA FIVE framework
-  packages (`@mirafive/sdk-react`, …); they wrap this client.
-- CSP: `connect-src https://collect.mirafive.io` (or your `host`).
-- Batches are `text/plain` POSTs (no CORS preflight); on page hide they go by
-  `navigator.sendBeacon`, else `fetch` with `keepalive`; a batch still in flight is sent
-  again by beacon (its batch id makes the copy count once). A failed send is tried up to
-  three times in all, with backoff, honouring `Retry-After` up to 10 s.
-- An event the server would refuse is dropped on its own (a development warning names
-  it) so it cannot take the batch down: properties over 32 KB of UTF-8 JSON, over 64
-  leaf values (a list or an empty object counts as one), deeper than 5 levels, a key
-  over 128 characters, or a string with a lone surrogate. Page URL, title and referrer
-  are cut to 2048 / 512 / 2048 characters without splitting a character.
-- Insecure contexts (plain `http`) work: ids come from `crypto.getRandomValues` there.
+- In-memory queue, batches of up to 50 events or every 2 s, `fetch` with `keepalive`.
+- Every batch carries a random `stream` id per page load (memory only) and a `seq` from 1, so the
+  server can count lost batches; a retry resends the same batch with the same `seq`.
+- On `visibilitychange: hidden` and `pagehide`, the queue goes out with `navigator.sendBeacon` to
+  `/v1/p` (`text/plain`, no CORS preflight).
+- Network errors, 5xx and 429 are retried with exponential backoff and jitter, with the same
+  `event_id`s (UUIDv7), so the server counts each event once. Other 4xx answers drop the batch.
+- At most 1000 queued events and 24 hours of age. With analytics consent, unsent events are kept in
+  localStorage and sent on the next page.
+- Nothing is captured or sent while the page is prerendered.
+- The SDK never throws into your page. Pass `debug: true` (or `data-debug="true"`) to see warnings.
 
-## Troubleshooting
+## For AI coding assistants
 
-| Symptom | Cause and fix |
-|---|---|
-| Nothing arrives | On `localhost` pass `trackLocalhost: true`; check Do Not Track, Global Privacy Control and `__mirafive_ignore`; in mode `"full"`, `consent(true)` must have run; check `host`. |
-| `403 secret_key_in_path` / `website_key_as_bearer` | You passed a secret key. Use the website key (`mf_…` of a website source). |
-| `403 origin_not_allowed` | Add the site's origin to the source's allowed origins in MIRA FIVE. |
-| `400 collection_mode_not_allowed` | `mode: "full"` on a consentless source: switch the source to full or drop `mode`. |
+Rules for integrating MIRA FIVE correctly. They hold for every MIRA FIVE SDK.
 
-## For AI agents
-
-Copy-paste setup prompt:
-
-```text
-Add MIRA FIVE analytics to this site with @mirafive/sdk-browser.
-1. Install @mirafive/sdk-browser with the project's package manager.
-2. Put the source's website key in the public env var of this framework
-   (VITE_MIRAFIVE_KEY, NEXT_PUBLIC_MIRAFIVE_KEY, PUBLIC_MIRAFIVE_KEY or
-   NUXT_PUBLIC_MIRAFIVE_KEY). Never use MIRAFIVE_SECRET_KEY in browser code.
-3. In the client entry (runs once, browser only), add:
-     import { createMira } from "@mirafive/sdk-browser"
-     import { pageviews } from "@mirafive/sdk-browser/pageviews"
-     export const mira = createMira({ key: <the env var>, plugins: [pageviews()] })
-   Add autocapture() from "@mirafive/sdk-browser/autocapture" if clicks should be counted.
-4. Keep the default consentless mode: it needs no banner. Only if the site already has a
-   consent manager and wants ids: add identity() from "@mirafive/sdk-browser/identity",
-   pass mode: "full", and call mira.consent({ statistics }) from
-   the consent manager's callback.
-5. Verify: load a page (not localhost, or pass trackLocalhost: true) and check the network
-   tab for POST https://collect.mirafive.io/v1/batch/<key> answering 202; report what you
-   changed.
-Do not add other analytics libraries, cookies or consent banners.
-```
-
-Facts for agents:
-
-- Imports: `import { createMira } from "@mirafive/sdk-browser"`; plugins from
-  `@mirafive/sdk-browser/pageviews`, `/identity`, `/autocapture`, `/search` (named
-  exports `pageviews`, `identity`, `autocapture`, `siteSearch`). There is no default export.
-- The only key is the source's public **website key**, passed as `key`. Env vars:
-  `VITE_MIRAFIVE_KEY`, `NEXT_PUBLIC_MIRAFIVE_KEY`, `PUBLIC_MIRAFIVE_KEY`,
-  `NUXT_PUBLIC_MIRAFIVE_KEY`. A custom host goes in the `host` option; browser code
-  cannot read server env vars such as `MIRAFIVE_HOST`.
-- Never ship `MIRAFIVE_SECRET_KEY` to a browser; passing `secretKey` throws, and a
-  secret key in a URL is refused and marked exposed.
-- `mode: "full"` requires `identity()` in `plugins` (else `createMira` throws) and a
-  `consent(...)` call (else nothing is sent). Consentless mode needs neither.
-- `siteSearch()` works in mode `"full"` only.
-- Nothing throws for transport reasons; failures are dropped with a
-  `[mirafive] …` console warning on local hosts only.
-- Verify an install: the network tab shows `POST …/v1/batch/{key}` with a `text/plain`
-  body and a `202` answer `{ "accepted": n, "dropped": 0 }`; the event then appears in
-  the source's live view in MIRA FIVE.
-- Wire contract: [mirafive/protocol](https://github.com/mirafive/protocol).
-
-## License
-
-[MIT](LICENSE) © 2026 Cloo GmbH
+- **Keys:** the public key (`mira_pk_…`) goes in browser and app code. The secret key (`mira_sk_…`)
+  goes only into the server's environment (`MIRAFIVE_SECRET_KEY`), never into client code, a
+  `NEXT_PUBLIC_`/`VITE_`/`PUBLIC_` variable or a repository. The SDKs refuse the wrong key.
+- **Money** is sent only from the server: integer minor units plus an ISO 4217 currency
+  (`amount: 1999, currency: "EUR"` is 19.99 EUR), never floats.
+- **Count once:** give money an `entryId` from the payment provider (`stripe:in_123`), so the
+  Stripe connector and retries do not double it. Give business events a stable id:
+  `eventId: await eventIdFor("order:123:paid")`. The same key gives the same id in every SDK.
+- **Personal data** never goes into event names or properties. Use your own user id (not an email)
+  for `identify`; put email, name and phone in its traits, which MIRA FIVE encrypts at rest.
+- **Consent:** keep `consent: "auto"`; it follows the site's consent banner (Usercentrics,
+  Cookiebot, consentmanager, CCM19, Borlabs, any TCF 2.2 CMP, Google Consent Mode). Call
+  `consent()` only for a custom banner. Do not gate the SDK behind consent yourself: without
+  consent it is cookieless and still counts.
+- **Never block on analytics:** event methods return nothing, never throw, and batch on their
+  own. Do not `await` or `try` them. Call `flush()`/`shutdown()` only at the end of a script or a
+  serverless function.
+- **Server events and visitors:** pass the browser's `mira.anonymousId` to your server and set it
+  as `anonymousId` on server events, so a purchase joins the visit and its source.

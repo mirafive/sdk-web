@@ -1,138 +1,65 @@
 {
-  "name": "@mirafive/sdk-browser",
-  "version": "1.0.0",
-  "description": "MIRA FIVE browser SDK",
+  "name": "@mirafive/web",
+  "version": "2.0.0",
+  "description": "MIRA FIVE browser SDK: consent-aware analytics and revenue attribution. Follows your consent banner, captures pageviews and engagement, about 8 kB gzip. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",
+    "attribution",
+    "browser",
+    "consent",
     "cookieless",
     "gdpr",
+    "mira-five",
     "mirafive",
-    "privacy"
+    "tcf"
   ],
-  "homepage": "https://mirafive.io",
+  "homepage": "https://github.com/mirafive/sdk-web#readme",
   "bugs": {
-    "email": "support@mirafive.io"
+    "url": "https://github.com/mirafive/sdk-web/issues"
   },
   "license": "MIT",
-  "author": "MIRA FIVE <support@mirafive.io>",
+  "author": "Cloo GmbH <hallo@mirafive.io> (https://mirafive.io)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mirafive/sdk-browser.git"
+    "url": "git+https://github.com/mirafive/sdk-web.git"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./pageviews": "./dist/pageviews.js",
-    "./identity": "./dist/identity.js",
-    "./autocapture": "./dist/autocapture.js",
-    "./search": "./dist/search.js",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mira.js": "./dist/mira.js",
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
-    "build": "tsdown",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware --deny-warnings",
+    "build": "bun run build.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "size": "size-limit",
-    "vendor:protocol": "bun scripts/vendor-protocol.ts",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build && publint --strict && attw --pack --profile esm-only && size-limit",
-    "prepublishOnly": "bun run check"
+    "lint": "oxlint",
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "dependencies": {
+    "@mirafive/protocol": "^2.0.0"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
-    "@size-limit/preset-small-lib": "^14.3.0",
-    "@types/node": "^26.6.5",
-    "ajv": "^8.20.0",
-    "happy-dom": "^21.0.4",
-    "oxfmt": "^0.74.0",
-    "oxlint": "^1.89.0",
-    "oxlint-tsgolint": "^7.0.2005",
-    "publint": "^0.3.25",
-    "size-limit": "^14.3.0",
-    "tsdown": "0.23.1",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "@types/bun": "^1.4.4",
+    "oxfmt": "^0.77.0",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
+    "typescript": "^7.0.2"
   },
-  "size-limit": [
-    {
-      "name": "core",
-      "path": "dist/index.js",
-      "import": "{ createMira }",
-      "gzip": true,
-      "limit": "2.54 kB"
-    },
-    {
-      "name": "core + pageviews",
-      "path": [
-        "dist/index.js",
-        "dist/pageviews.js"
-      ],
-      "import": {
-        "dist/index.js": "{ createMira }",
-        "dist/pageviews.js": "{ pageviews }"
-      },
-      "gzip": true,
-      "limit": "2.84 kB"
-    },
-    {
-      "name": "identity",
-      "path": "dist/identity.js",
-      "import": "{ identity }",
-      "gzip": true,
-      "limit": "1.18 kB"
-    },
-    {
-      "name": "autocapture",
-      "path": "dist/autocapture.js",
-      "import": "{ autocapture }",
-      "gzip": true,
-      "limit": "0.89 kB"
-    },
-    {
-      "name": "search",
-      "path": "dist/search.js",
-      "import": "{ siteSearch }",
-      "gzip": true,
-      "limit": "0.42 kB"
-    },
-    {
-      "name": "everything",
-      "path": [
-        "dist/index.js",
-        "dist/pageviews.js",
-        "dist/identity.js",
-        "dist/autocapture.js",
-        "dist/search.js"
-      ],
-      "import": {
-        "dist/index.js": "{ createMira }",
-        "dist/pageviews.js": "{ pageviews }",
-        "dist/identity.js": "{ identity }",
-        "dist/autocapture.js": "{ autocapture }",
-        "dist/search.js": "{ siteSearch }"
-      },
-      "gzip": true,
-      "limit": "4.72 kB"
-    }
-  ],
-  "engines": {
-    "node": ">=20"
-  },
-  "packageManager": "bun@1.4.4",
-  "mirafive": {
-    "protocol": [
-      "clean-url",
-      "key",
-      "types"
-    ]
-  }
+  "packageManager": "bun@1.4.4"
 }

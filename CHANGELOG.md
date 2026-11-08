@@ -1,39 +1,31 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-11-08
 
-- Revenue events may carry `payment_id`, the payment provider's id of the payment (1–255 characters), next to `revenue` and `currency`. Nothing changes in the API: pass it in the properties. The README shows a Stripe example.
-- The default ingest host is `https://collect.mirafive.io`.
+A rewrite for the current MIRA FIVE platform: consent tiers, the revenue ledger, touchpoints and
+the `/v1/batch` wire format.
 
-- **Breaking:** feature flags and A/B experiments are removed. The `flags` and
-  `experiments` plugins and their entries `@mirafive/sdk-browser/flags` and
-  `/experiments` are gone, with `flag()`, `config()`, `onFlags()`, `setFlagProperties()`,
-  the `FlagBootstrap` and `FlagState` types, the `flags` hook and state, and the
-  `window.__mirafive_experiments` and `__mirafive_aid_next` globals. No `$exposure`
-  event is sent.
-- Statistics is the only consent purpose. The `experiments` and `targeting` scopes are
-  retired: `consent({ experiments, targeting })` and a preset `window.__mirafive_consent`
-  that holds them still work; the keys are ignored, never stored, and neither counts as
-  consent.
+### Added
 
-## 1.0.0 — 2026-09-27
+- follows Usercentrics, Cookiebot, consentmanager, CCM19, Borlabs, any TCF 2.2 CMP and
+  Google Consent Mode; Global Privacy Control; `survey()` touchpoints; `anonymousId` to join server
+  events to the visit; typed event maps; refuses secret keys; the script tag with a stub queue.
 
-First release on the v1 ingest protocol, rebuilt from scratch around plugins.
+### Migrating from 1.x
 
-- `createMira()` core (2.48 kB): batched `text/plain` delivery to `/v1/batch/{key}`,
-  `sendBeacon` on page hide with a `keepalive` fallback, retries with full-jitter
-  backoff and `Retry-After`, Do Not Track / GPC / `__mirafive_ignore` / prerendering /
-  local-host guards, a double-boot guard, typed events, and stubs that warn in
-  development for members of plugins that are not loaded.
-- Plugins, each its own entry: `pageviews` (Navigation API or history patch, hash
-  mode), `identity` (consent scopes, anonymous and session ids per PROTOCOL §7,
-  `identify`/`reset`), `autocapture`, `siteSearch`, `flags` (bootstrap, values and
-  browser documents, segment lookups, previews, overrides, exposures) and `experiments`
-  (page-snippet exposures).
-- Consentless mode reads no language, time zone or screen and stores nothing.
-- An event the server would refuse (properties over the PROTOCOL §3 limits, a lone
-  surrogate) is dropped on its own instead of taking its batch down; page fields are cut
-  without splitting a character; batches in flight are beaconed again on page hide.
-- `MiraCore.hold()`/`release()` keep events between a consent grant and a lazily loaded
-  `identity()`.
-- `MiraCore` and `Plugin` are exported for framework packages and the hosted tracker.
+- **Keys:** projects have a public key (`mira_pk_…`, browser and apps) and a secret key
+  (`mira_sk_…`, servers). `mf_…` website and secret keys are gone. Every SDK refuses the wrong
+  kind of key with a clear message.
+- **Host:** `https://events.mirafive.io` (was `collect.mirafive.io`).
+- **Environment:** `MIRAFIVE_SECRET_KEY` and `MIRAFIVE_HOST` on servers; the public key as
+  `NEXT_PUBLIC_MIRAFIVE_KEY`, `VITE_MIRAFIVE_KEY`, `PUBLIC_MIRAFIVE_KEY` (Astro),
+  `NUXT_PUBLIC_MIRAFIVE_KEY` or `MIRAFIVE_PUBLIC_KEY` (PHP templates).
+- **Consent:** there are no modes any more. The browser SDK follows the site's consent banner
+  (`consent: "auto"`) and collects what each tier allows: cookieless without consent, an
+  anonymous id with analytics consent, a user with `identify`. Server events carry the consent
+  they were collected under (default `not_applicable`).
+- **Revenue:** `revenue()` on the server SDKs, in integer minor units with an ISO currency,
+  `entryId` (replaces `payment_id`), `entryKind`, fees, tax, refunds and subscriptions. Revenue
+  properties on plain events are no longer read.
+- **Plugins:** the browser SDK has no plugins. Pageviews, SPA navigation, engagement, outbound
+  clicks, downloads and form submits are on by default and switched with `autocapture`.

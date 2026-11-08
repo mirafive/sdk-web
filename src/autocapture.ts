@@ -1,104 +1,69 @@
-import type { Plugin, Properties } from "./types.ts"
+import type { Host } from "./consent/types";
 
-export interface AutocaptureOptions {
-  /** More attributes to report in `$el_attrs`, besides data-testid, data-test, data-cy, data-qa and data-track. */
-  selectorAttributes?: string[]
+/**
+ * The part of a URL that makes it a different page. The hash is ignored, except for hash routers
+ * (`#/route`, `#!/route`), where the hash is the route.
+ */
+export function pageKey(href: string): string {
+  const hashAt = href.indexOf("#");
+  if (hashAt === -1) return href;
+  const hash = href.slice(hashAt);
+  return hash.startsWith("#/") || hash.startsWith("#!") ? href : href.slice(0, hashAt);
 }
 
-const roles = "[role=button],[role=link],[role=tab],[role=menuitem]"
-const labelled = "a,button," + roles
+/** Wait after a navigation before reading the page: routers update the title after they render,
+ *  and a redirect (push, then replace) collapses into one pageview. */
+const SETTLE_MS = 100;
 
-// Generated names (CSS modules, hashed utilities) change every deploy: a 5+ character part mixing letters and digits.
-const stable = (name: string): boolean =>
-  !!name && name.length < 25 && !name.split(/[-_]/).some((part) => /^(?=.*\d)(?=.*[a-z]).{5,}$/i.test(part))
-
-const classes = (element: Element): string[] => [...element.classList].filter(stable).slice(0, 3)
-
-const selector = (element: Element | null): string => {
-  const parts: string[] = []
-
-  while (element && parts.length < 5 && !element.matches("body,html")) {
-    const tag = element.localName
-    const { id } = element
-
-    if (stable(id)) {
-      parts.unshift(`${tag}#${id}`)
-      break
-    }
-
-    const same = [...(element.parentElement?.children ?? [])].filter((child) => child.localName === tag)
-
-    parts.unshift(
-      tag +
-        classes(element)
-          .map((name) => "." + name)
-          .join("") +
-        (same.length > 1 ? `:nth-of-type(${same.indexOf(element) + 1})` : "")
-    )
-    element = element.parentElement
-  }
-
-  return parts.join(" > ")
+interface NavigationLike {
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
 }
 
-/** `$autocapture` for clicks, submits and changes. Describes elements, never what was typed. */
-export const autocapture = ({ selectorAttributes = [] }: AutocaptureOptions = {}): Plugin => ({
-  name: "autocapture",
-  setup(core) {
-    const attributes = ["data-testid", "data-test", "data-cy", "data-qa", "data-track", ...selectorAttributes]
-    const types = ["click", "submit", "change"]
+/**
+ * Calls `onNavigate` after each client-side navigation of a single-page app.
+ *
+ * Prefers the Navigation API (`navigatesuccess` fires once a navigation and its route handler have
+ * finished; `currententrychange` also covers `pushState`). Without it, `history.pushState` and
+ * `replaceState` are wrapped and `popstate` is watched. Deduplication of same-URL calls is the
+ * caller's job, because several of these signals fire for one navigation.
+ */
+export function watchNavigation(host: Host, onNavigate: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settle = () => {
+    clearTimeout(timer);
+    timer = setTimeout(onNavigate, SETTLE_MS);
+  };
 
-    // Capture phase, so a handler calling stopPropagation() does not hide its control.
-    const listener = ({ type, target }: Event): void => {
-      const element =
-        target instanceof Element
-          ? type === "submit"
-            ? target
-            : target.closest("a,button,input,select,textarea," + roles)
-          : null
-
-      if (
-        !element ||
-        element.closest("[data-mira-no-capture]") ||
-        (element instanceof HTMLInputElement && /^(password|email|hidden)$/.test(element.type))
-      ) {
-        return
-      }
-
-      const read = (name: string): string | undefined => core.cut(element.getAttribute(name), 128)
-      const found: Properties = {}
-      const text = element.matches(labelled) && element.textContent?.replace(/\s+/g, " ").trim()
-      const list = classes(element)
-
-      for (const name of attributes) {
-        found[name] = read(name)
-      }
-
-      core.send(
-        "$autocapture",
-        {
-          $event_type: type,
-          $el_tag: element.localName,
-          $el_selector: selector(element),
-          $el_id: stable(element.id) ? element.id : undefined,
-          $el_classes: list.length ? list : undefined,
-          $el_text: core.cut(text || undefined, 128),
-          $el_href:
-            element instanceof HTMLAnchorElement && /^https?:/.test(element.href)
-              ? core.clean(element.href)
-              : undefined,
-          $el_name: read("name"),
-          $el_type: read("type"),
-          $el_attrs: Object.values(found).some(Boolean) ? found : undefined
-        },
-        { url: core.clean(location.href) }
-      )
-    }
-
-    for (const type of types) {
-      document.addEventListener(type, listener, true)
-    }
-
-    return () => types.forEach((type) => document.removeEventListener(type, listener, true))
+  const navigation = host.navigation as NavigationLike | undefined;
+  if (navigation?.addEventListener) {
+    const events = ["navigatesuccess", "currententrychange"];
+    for (const name of events) navigation.addEventListener(name, settle);
+    return () => {
+      clearTimeout(timer);
+      for (const name of events) navigation.removeEventListener(name, settle);
+    };
   }
-})
+
+  const history = host.history;
+  const methods = ["pushState", "replaceState"] as const;
+  const restore = methods.map((name) => {
+    const original = history[name];
+    const wrapped = function (this: History, ...args: Parameters<History["pushState"]>) {
+      const result = original.apply(this, args);
+      settle();
+      return result;
+    };
+    history[name] = wrapped;
+    return () => {
+      // Only unwrap if no other script wrapped it after us; otherwise we would cut their chain.
+      if (history[name] === wrapped) history[name] = original;
+    };
+  });
+  host.addEventListener("popstate", settle);
+  return () => {
+    clearTimeout(timer);
+    for (const undo of restore) undo();
+    host.removeEventListener("popstate", settle);
+  };
+}

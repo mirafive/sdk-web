@@ -1,29 +1,22 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "target": "es2022",
-    // Server-only packages: drop "dom" and rely on @types/node for fetch and crypto.
-    "lib": ["es2024", "dom"],
-    "types": ["node"],
+    "target": "es2024",
+    "lib": ["es2024", "esnext.disposable", "dom", "dom.iterable"],
     "module": "preserve",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "resolveJsonModule": true,
-
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "erasableSyntaxOnly": true,
-    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "types": ["bun"]
   },
-  "include": ["src", "test", "scripts", "*.config.ts"]
+  "include": ["src", "*.ts"]
 }
