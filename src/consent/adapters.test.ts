@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { fakeHost } from "../test/fake-host";
 import { autoConsent } from "./auto";
+import { borlabs } from "./borlabs";
+import { ccm19 } from "./ccm19";
 import { consentMode, fromDataLayer } from "./consent-mode";
 import { fromCmpData } from "./consentmanager";
 import { cookiebot } from "./cookiebot";
@@ -175,6 +177,127 @@ describe("consentmanager", () => {
       analytics: "granted",
       marketing: "denied",
     });
+  });
+});
+
+describe("CCM19", () => {
+  test("waits for an answer, then follows the MIRA FIVE embeddings", () => {
+    const ccm: { consent: boolean; acceptedEmbeddings: { id: string; name: string }[] } = {
+      consent: false,
+      acceptedEmbeddings: [],
+    };
+    const fake = fakeHost({ extra: { CCM: ccm } });
+    expect(ccm19.detect(fake.host)).toBe(true);
+    const seen: ConsentStatus[] = [];
+    const stop = ccm19.subscribe(fake.host, (status) => seen.push(status));
+
+    Object.assign(ccm, {
+      consent: true,
+      acceptedEmbeddings: [
+        { id: "1", name: "Google Analytics" },
+        { id: "2", name: "MIRA FIVE" },
+      ],
+    });
+    fake.host.dispatchEvent(new Event("ccm19WidgetClosed"));
+
+    ccm.acceptedEmbeddings.push({ id: "3", name: "MIRA FIVE Marketing" });
+    fake.host.dispatchEvent(new Event("ccm19WidgetClosed"));
+
+    stop();
+    ccm.acceptedEmbeddings = [];
+    fake.host.dispatchEvent(new Event("ccm19WidgetClosed"));
+
+    expect(seen).toEqual([
+      { analytics: "unknown", marketing: "unknown" },
+      { analytics: "granted", marketing: "denied" },
+      { analytics: "granted", marketing: "granted" },
+    ]);
+  });
+
+  test("other tools' embeddings decide nothing for MIRA", () => {
+    const fake = fakeHost({
+      extra: {
+        CCM: {
+          consent: true,
+          acceptedEmbeddings: [
+            { id: "1", name: "Google Analytics" },
+            { id: "2", name: "Meta Pixel Marketing" },
+          ],
+        },
+      },
+    });
+    const seen: ConsentStatus[] = [];
+    ccm19.subscribe(fake.host, (status) => seen.push(status))();
+    expect(seen).toEqual([{ analytics: "denied", marketing: "denied" }]);
+  });
+
+  test("the marketing embedding alone grants analytics too", () => {
+    const fake = fakeHost({
+      extra: {
+        CCM: { consent: true, acceptedEmbeddings: [{ id: "3", name: "Mira Five marketing" }] },
+      },
+    });
+    const seen: ConsentStatus[] = [];
+    ccm19.subscribe(fake.host, (status) => seen.push(status))();
+    expect(seen).toEqual([{ analytics: "granted", marketing: "granted" }]);
+  });
+
+  test("is not detected without its global or script", () => {
+    expect(ccm19.detect(fakeHost().host)).toBe(false);
+  });
+});
+
+describe("Borlabs Cookie", () => {
+  function borlabsHost(groups: Record<string, boolean>, services: Record<string, boolean> = {}) {
+    const consents = {
+      hasConsentForServiceGroup: (id: string) => groups[id] === true,
+      hasConsent: (id: string) => services[id] === true,
+    };
+    return fakeHost({ extra: { BorlabsCookie: { Consents: consents } } });
+  }
+
+  test("nothing granted before a save is unknown; after a save it is denied", () => {
+    const groups: Record<string, boolean> = {};
+    const fake = borlabsHost(groups);
+    expect(borlabs.detect(fake.host)).toBe(true);
+    const seen: ConsentStatus[] = [];
+    const stop = borlabs.subscribe(fake.host, (status) => seen.push(status));
+
+    fake.host.dispatchEvent(new Event("borlabs-cookie-consent-saved"));
+    groups.statistics = true;
+    fake.host.dispatchEvent(new Event("borlabs-cookie-consent-saved"));
+    groups.marketing = true;
+    fake.host.dispatchEvent(new Event("borlabs-cookie-consent-saved"));
+
+    stop();
+    groups.statistics = false;
+    fake.host.dispatchEvent(new Event("borlabs-cookie-consent-saved"));
+
+    expect(seen).toEqual([
+      { analytics: "unknown", marketing: "unknown" },
+      { analytics: "denied", marketing: "denied" },
+      { analytics: "granted", marketing: "denied" },
+      { analytics: "granted", marketing: "granted" },
+    ]);
+  });
+
+  test("a stored grant from an earlier page counts before any save", () => {
+    const fake = borlabsHost({ statistics: true });
+    const seen: ConsentStatus[] = [];
+    borlabs.subscribe(fake.host, (status) => seen.push(status))();
+    expect(seen).toEqual([{ analytics: "granted", marketing: "unknown" }]);
+  });
+
+  test("a mira-five service grants analytics without the statistics group", () => {
+    const fake = borlabsHost({}, { "mira-five": true });
+    const seen: ConsentStatus[] = [];
+    borlabs.subscribe(fake.host, (status) => seen.push(status))();
+    expect(seen).toEqual([{ analytics: "granted", marketing: "unknown" }]);
+  });
+
+  test("Borlabs Cookie 2 is not detected", () => {
+    const fake = fakeHost({ extra: { BorlabsCookie: { checkCookieGroupConsent: () => true } } });
+    expect(borlabs.detect(fake.host)).toBe(false);
   });
 });
 
