@@ -247,15 +247,15 @@ describe("CCM19", () => {
   });
 });
 
-describe("Borlabs Cookie", () => {
-  function borlabsHost(groups: Record<string, boolean>, services: Record<string, boolean> = {}) {
-    const consents = {
-      hasConsentForServiceGroup: (id: string) => groups[id] === true,
-      hasConsent: (id: string) => services[id] === true,
-    };
-    return fakeHost({ extra: { BorlabsCookie: { Consents: consents } } });
-  }
+function borlabsHost(groups: Record<string, boolean>, services: Record<string, boolean> = {}) {
+  const consents = {
+    hasConsentForServiceGroup: (id: string) => groups[id] === true,
+    hasConsent: (id: string) => services[id] === true,
+  };
+  return fakeHost({ extra: { BorlabsCookie: { Consents: consents } } });
+}
 
+describe("Borlabs Cookie", () => {
   test("nothing granted before a save is unknown; after a save it is denied", () => {
     const groups: Record<string, boolean> = {};
     const fake = borlabsHost(groups);
