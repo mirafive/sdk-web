@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.3 — 2026-11-10
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.3.0, which adds the types of the person erasure the server SDKs
+  call. The browser SDK has no new method: erasing a person needs the secret key, which never
+  belongs in a browser.
+
 ## 2.0.2 — 2026-11-10
 
 ### Changed
