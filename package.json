@@ -1,6 +1,6 @@
 {
   "name": "@mirafive/web",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "MIRA FIVE browser SDK: consent-aware analytics and revenue attribution. Follows your consent banner, captures pageviews and engagement, about 8 kB gzip. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",
