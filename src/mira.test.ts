@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
+import { validateEvent } from "@mirafive/protocol";
+
 import { createMira, type MiraOptions } from "./mira";
 import { fakeHost, tick } from "./test/fake-host";
 
@@ -37,12 +39,43 @@ describe("T0: no analytics consent", () => {
       expect(event.context.timezone).toBeUndefined();
       expect(event.context.device).toBeUndefined();
       expect(event.context.os).toBeUndefined();
-      expect(event.context.locale).toBe("de");
+      expect(event.context.locale).toBeUndefined();
       expect(event.context.page.url).toBe("https://shop.example/landing?utm_source=news");
     }
     expect(fake.storageReads()).toBe(0);
     // Client hints are a device read too.
     expect(fake.hintCalls()).toBe(0);
+  });
+
+  test("never reads the browser's languages; the server takes the language from the request", async () => {
+    let languageReads = 0;
+    const navigator = {
+      get language() {
+        languageReads += 1;
+        return "de-DE";
+      },
+      get languages() {
+        languageReads += 1;
+        return ["de-DE", "de"];
+      },
+      sendBeacon: () => true,
+    };
+    const fake = fakeHost({ extra: { navigator } });
+    const mira = createMira(
+      { ...base, consent: { analytics: "unknown", marketing: "unknown" } },
+      fake.host,
+    );
+    mira.track("viewed_pricing");
+    await mira.flush();
+
+    const events = fake.events();
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event.context).not.toHaveProperty("locale");
+      expect(event.context).not.toHaveProperty("languages");
+      expect(validateEvent(event)).toEqual([]);
+    }
+    expect(languageReads).toBe(0);
   });
 
   test("an unanswered banner (unknown) is T0 too", async () => {
@@ -85,6 +118,7 @@ describe("T1: device context", () => {
     });
     expect(typeof second?.context.timezone).toBe("string");
     expect(third?.context.device).toEqual({ model: "Pixel 9" });
+    for (const event of [first, second, third]) expect(validateEvent(event)).toEqual([]);
     // Asked once, then cached in memory.
     expect(fake.hintCalls()).toBe(1);
   });

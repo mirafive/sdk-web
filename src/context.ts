@@ -51,25 +51,25 @@ export async function readClientHints(host: Host): Promise<ClientHints | undefin
 /**
  * The event context for the current tier (docs/data-collection.md, Tiers).
  *
- * - **T0** (no analytics consent, `device` is undefined): only what the HTTP request itself
- *   would carry anyway: the page URL, its referrer, the title, and the language as two letters (as
- *   in `Accept-Language`). Nothing that is read from the device.
- * - **T1+** (analytics consent): adds the screen, viewport and pixel ratio, the full locale and
- *   the preferred languages, the time zone, the client hints, and a location the site passed.
+ * - **T0** (no analytics consent, `device` is undefined): only the page URL, its referrer and
+ *   the title. Nothing that is read from the device, not even `navigator.language`: the server
+ *   takes the language from the request's `Accept-Language`.
+ * - **T1+** (analytics consent): adds the screen, viewport and pixel ratio, the locale and the
+ *   preferred languages, the time zone, the client hints, and a location the site passed.
  */
 export function buildContext(host: Host, page: PageInfo, device?: DeviceExtras): EventContext {
-  const navigator = host.navigator;
-  const language = navigator.language || "";
   const context: EventContext = {
     page: {
       url: page.url,
       referrer: page.referrer || undefined,
       title: (page.title ?? host.document.title) || undefined,
     },
-    locale: device ? language : language.slice(0, 2) || undefined,
     library: LIBRARY,
   };
   if (!device) return context;
+
+  const navigator = host.navigator;
+  context.locale = navigator.language?.slice(0, MAX_LOCALE) || undefined;
 
   const density = host.devicePixelRatio;
   context.screen = {
