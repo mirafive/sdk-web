@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2 — 2026-11-10
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.2.1 (was `^2.0.0`), so an install resolves the protocol it is
+  tested with.
+- Built and checked with oxfmt 0.78 and oxlint 1.93. The script tag is unchanged in behaviour.
+
 ## 2.0.1 — 2026-11-10
 
 ### Fixed
