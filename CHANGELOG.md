@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.0 — 2026-11-23
+
+### Added
+
+- Every `$engagement` names the page view it measures (`page_event_id`, the `event_id` of that
+  `$pageview`). The server counts it for that page view's visit, also when a tab is shown again an
+  hour later or the event is sent late from the saved queue. Nothing else changes, and a server
+  before this field ignores it. After consent changes tier or `reset()` is called, an
+  `$engagement` names no page view, so it never ties events across that line.
+- `$non_interaction: true` keeps an event of your own from starting a visit. `track` accepts it
+  with typed events too, and the README documents it.
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.4.0, which adds the field.
+
 ## 2.0.3 — 2026-11-10
 
 ### Changed

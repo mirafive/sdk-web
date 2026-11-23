@@ -173,6 +173,21 @@ These events describe the page, not the device, so they are sent at every tier (
 person comes back to a hidden tab, the next `$engagement` carries only the time since the last
 one, so `engaged_ms` adds up per page view.
 
+Each `$engagement` names its page view (`page_event_id`, the `event_id` of that `$pageview`), so
+the time counts for the visit the page view belongs to, also when a tab is shown again an hour
+later. It is the id of an event the page already sent, not an identifier of the person, and it is
+left out once consent changed or `reset()` was called on that page.
+
+### Events that start no visit
+
+A visit needs an interaction. `$engagement` never starts one. If your own code sends an event
+without the person doing anything (a timer, a video that keeps playing in a background tab), mark
+it, and it will not open a visit either:
+
+```ts
+mira.track("video_progress", { percent: 50, $non_interaction: true });
+```
+
 ## What is collected at each consent tier
 
 |                                                        | T0: no analytics consent (`unknown`, `denied`)  | T1: analytics consent                                                               | T2: T1 + `identify` | T3: + marketing consent |
