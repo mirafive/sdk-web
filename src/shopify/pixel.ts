@@ -318,7 +318,10 @@ export async function startShopifyPixel(
       input.customerPrivacy.subscribe("visitorConsentCollected", (event) => {
         void ready.then(async () => {
           latest = fromPrivacy(event?.customerPrivacy);
-          if (latest.analytics === "granted") await bridge.load();
+          // A "no" that arrives while the cookie of an earlier "yes" is still being read removes
+          // it as well: what the read finds is never put to use.
+          if (latest.analytics !== "granted") bridge.forget();
+          else await bridge.load();
           emit?.(latest);
         });
       });

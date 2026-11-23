@@ -1,4 +1,4 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion -- test fakes stand in for browser globals */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/no-unnecessary-type-assertion, eslint/no-underscore-dangle, unicorn/consistent-function-scoping -- test fakes stand in for browser globals and cart attributes start with an underscore */
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { validateEvent } from "@mirafive/protocol";
@@ -301,6 +301,33 @@ describe("pixel mode: more", () => {
     expect(next.events()[0]!.user_id).toBeUndefined();
   });
 
+  test("a no that arrives while the cookie of a yes is being read still removes the cookie", async () => {
+    const fake = fakeHost();
+    const pixel = fakePixel({ cookies: { mira_aid: "earlier" } });
+    let finishRead: (() => void) | undefined;
+    const { cookie } = pixel.input.browser;
+    const read = (name: string) => cookie.get(name);
+    cookie.get = (name) =>
+      new Promise((resolve) => {
+        finishRead = () => void read(name).then(resolve);
+      });
+    const mira = await startShopifyPixel(fake.host, pixel.input);
+    pixel.emit({
+      name: "visitorConsentCollected",
+      customerPrivacy: { analyticsProcessingAllowed: true, marketingAllowed: false },
+    });
+    await tick(5);
+    pixel.emit({
+      name: "visitorConsentCollected",
+      customerPrivacy: { analyticsProcessingAllowed: false, marketingAllowed: false },
+    });
+    await tick(5);
+    finishRead?.();
+    await tick(10);
+    expect(mira!.status.analytics).toBe("denied");
+    expect(pixel.jar.has("mira_aid")).toBe(false);
+  });
+
   test("a setup error is logged, not thrown", async () => {
     const fake = fakeHost();
     const warn = spyOn(console, "warn").mockImplementation(() => {});
@@ -496,11 +523,20 @@ const shop = (): Shop => ({
 /** One page view of a storefront, with Shopify's consent as given. */
 function storefront(
   state: Shop,
-  options: { root?: string; consent?: "shopify" | { analytics: boolean } } = {},
+  options: {
+    root?: string;
+    consent?: "shopify" | { analytics: boolean };
+    privacy?: ReturnType<typeof privacyOf>;
+  } = {},
 ) {
   const fake = fakeHost({
     extra: {
-      Shopify: { routes: { root: options.root ?? "/" } },
+      Shopify: {
+        routes: { root: options.root ?? "/" },
+        ...(options.consent === "shopify"
+          ? { customerPrivacy: options.privacy ?? privacyOf(true, true) }
+          : {}),
+      },
       fetch: async (url: string, init: RequestInit) => {
         if (url.endsWith("cart/update.js")) {
           state.posts.push({
@@ -535,7 +571,8 @@ function storefront(
       key: KEY,
       host: HOST,
       consent: options.consent ?? { analytics: false },
-      onAnonymousId: shopifyStorefront(fake.host),
+      // Shopify mode wires the hook itself; the other pages bring one.
+      onAnonymousId: options.consent === "shopify" ? undefined : shopifyStorefront(fake.host),
     },
     fake.host,
   );
@@ -822,6 +859,90 @@ describe("storefront visitor id", () => {
     expect(state.jar.get("mira_aid")).toBe(mira.anonymousId!);
   });
 
+  test("an early clear that is still on its way does not overtake the id written after it", async () => {
+    const state = shop();
+    const { mira, fake } = storefront(state);
+    const real = fake.host.fetch;
+    const held: { value: string; release: () => void }[] = [];
+    const landed: string[] = [];
+    // Every write answers late, and what has landed so far is kept in order.
+    Object.assign(fake.host, {
+      fetch: (url: string, init: RequestInit) =>
+        url.endsWith("cart/update.js")
+          ? new Promise<Response>((resolve) => {
+              const value = JSON.parse(init.body as string).attributes._mira_aid as string;
+              held.push({
+                value,
+                release: () => {
+                  landed.push(value === "" ? "clear" : "id");
+                  resolve(new Response("{}", { status: 200 }));
+                },
+              });
+            })
+          : real(url, init),
+    });
+    mira.consent({ analytics: true });
+    await tick(5);
+    mira.consent({ analytics: false });
+    await tick(5);
+    mira.consent({ analytics: true });
+    await tick(5);
+    // id1 and the early clear are out; the second id waits for both.
+    expect(held.map((request) => request.value === "")).toEqual([false, true]);
+    held[0]!.release();
+    await tick(10);
+    expect(held).toHaveLength(2);
+    held[1]!.release();
+    await tick(10);
+    expect(held).toHaveLength(3);
+    held[2]!.release();
+    await tick(10);
+    expect(landed).toEqual(["id", "clear", "id"]);
+  });
+
+  test("nothing goes to the tab when consent ended and the cart is gone while an id was on its way", async () => {
+    const state = shop();
+    const { mira, fake } = storefront(state);
+    const real = fake.host.fetch;
+    let release: (() => void) | undefined;
+    Object.assign(fake.host, {
+      fetch: (url: string, init: RequestInit) =>
+        url.endsWith("cart/update.js")
+          ? new Promise<Response>((resolve) => {
+              release = () => resolve(new Response("{}", { status: 200 }));
+              void init;
+            })
+          : real(url, init),
+    });
+    mira.consent({ analytics: true });
+    await tick(5);
+    state.jar.delete("cart");
+    mira.consent({ analytics: false });
+    await tick(5);
+    release?.();
+    await tick(10);
+    expect(fake.storage.data.has("mira_cart")).toBe(false);
+  });
+
+  test("a deletion cookie is written only where the cookie may be", async () => {
+    const state = shop();
+    const deletes: string[] = [];
+    const { mira, fake } = storefront(state);
+    const jar = Object.getOwnPropertyDescriptor(fake.host.document, "cookie")!;
+    Object.defineProperty(fake.host.document, "cookie", {
+      get: () =>
+        state.jar.size && [...state.jar].map(([key, value]) => `${key}=${value}`).join("; "),
+      set: (value: string) => {
+        if (value.includes("Max-Age=0")) deletes.push(value);
+        jar.set!(value);
+      },
+    });
+    mira.consent({ analytics: false });
+    mira.consent({ analytics: false });
+    await tick(5);
+    expect(deletes).toEqual([]);
+  });
+
   test("a visitor who never consented and has no cart makes no request", async () => {
     const state = shop();
     state.jar.delete("cart");
@@ -847,8 +968,117 @@ describe("storefront visitor id", () => {
   });
 });
 
+describe("a banner found after boot", () => {
+  const cookiebot = (consent?: { statistics: boolean; marketing: boolean }) => ({
+    hasResponse: consent !== undefined,
+    consent: consent ?? {},
+  });
+
+  async function page(state: Shop, banner?: ReturnType<typeof cookiebot>) {
+    const shopPage = storefront(state, { consent: "shopify" });
+    await tick(20);
+    expect(shopPage.mira.status.analytics).toBe("granted");
+    // The banner's script arrives later (a tag manager, an app embed).
+    if (banner) Object.assign(shopPage.fake.host, { Cookiebot: banner });
+    await tick(400);
+    return shopPage;
+  }
+
+  test("with a stored yes the visitor keeps the id, on every page, and the cart is not touched", async () => {
+    const state = shop();
+    const first = await page(state, cookiebot({ statistics: true, marketing: true }));
+    const id = first.mira.anonymousId;
+    expect(first.mira.status.analytics).toBe("granted");
+    first.leave();
+    const second = await page(state, cookiebot({ statistics: true, marketing: true }));
+    expect(second.mira.anonymousId).toBe(id!);
+    // One write of the id on the first page; no clear, no second id.
+    expect(state.posts.map((post) => post.body.attributes[CART_ATTRIBUTE])).toEqual([id!]);
+  });
+
+  test("with a stored no it revokes: the cookie goes and the cart is emptied", async () => {
+    const state = shop();
+    const shopPage = await page(state, cookiebot({ statistics: false, marketing: false }));
+    expect(shopPage.mira.status.analytics).toBe("denied");
+    expect(state.jar.has("mira_aid")).toBe(false);
+    expect(state.posts.at(-1)!.body.attributes[CART_ATTRIBUTE]).toBe("");
+  });
+
+  test("not answered yet it ends unknown", async () => {
+    const state = shop();
+    const shopPage = await page(state, cookiebot());
+    expect(shopPage.mira.status.analytics).toBe("unknown");
+  });
+});
+
+const gtag = function (..._args: unknown[]) {
+  // oxlint-disable-next-line prefer-rest-params -- the dataLayer holds `arguments` objects
+  return arguments;
+};
+/** Google's snippet before the banner answered: Consent Mode's default is "granted". */
+const granted = () => [
+  gtag("consent", "default", { analytics_storage: "granted", ad_storage: "granted" }),
+];
+
+describe("a choice made before init", () => {
+  test("a denial is init's own: Consent Mode's default never grants first", async () => {
+    const fake = fakeHost({ extra: { dataLayer: granted() } });
+    const mira = createMira(undefined, fake.host);
+    mira.consent({ analytics: false });
+    mira.init({ key: KEY, host: HOST });
+    await tick(700);
+    expect(mira.status.analytics).toBe("denied");
+    expect(fake.storage.data.size).toBe(0);
+  });
+
+  test("'shopify' before init wires the cookie and the cart", async () => {
+    const state = shop();
+    const fake = fakeHost({
+      extra: { Shopify: { routes: { root: "/" }, customerPrivacy: privacyOf(true, true) } },
+    });
+    Object.defineProperty(fake.host.document, "cookie", {
+      get: () => [...state.jar].map(([key, value]) => `${key}=${value}`).join("; "),
+      set: (value: string) => {
+        const [pair = ""] = value.split(";");
+        const [key = "", ...rest] = pair.split("=");
+        state.jar.set(key, rest.join("="));
+      },
+    });
+    const mira = createMira(undefined, fake.host);
+    mira.consent("shopify");
+    mira.init({ key: KEY, host: HOST });
+    await tick(20);
+    expect(state.jar.get("mira_aid")).toBe(mira.anonymousId!);
+  });
+
+  test("consent('shopify') at runtime follows Shopify and wires the cart too", async () => {
+    const state = shop();
+    const fake = fakeHost({
+      extra: { Shopify: { routes: { root: "/" }, customerPrivacy: privacyOf(true, true) } },
+    });
+    Object.defineProperty(fake.host.document, "cookie", {
+      get: () => [...state.jar].map(([key, value]) => `${key}=${value}`).join("; "),
+      set: (value: string) => {
+        const [pair = ""] = value.split(";");
+        const [key = "", ...rest] = pair.split("=");
+        state.jar.set(key, rest.join("="));
+      },
+    });
+    const mira = createMira({ key: KEY, host: HOST, consent: { analytics: false } }, fake.host);
+    mira.consent("shopify");
+    await tick(20);
+    expect(mira.status.analytics).toBe("granted");
+    expect(state.jar.get("mira_aid")).toBe(mira.anonymousId!);
+  });
+});
+
 describe("script tag boot", () => {
-  async function boot(extra: Record<string, unknown>, writes: string[], consent = "shopify") {
+  async function boot(
+    extra: Record<string, unknown>,
+    writes: string[],
+    consent = "shopify",
+    withKey = true,
+  ) {
     const fake = fakeHost({ extra });
     Object.defineProperty(fake.host.document, "cookie", {
       get: () => "",
@@ -857,7 +1087,7 @@ describe("script tag boot", () => {
       },
     });
     const script = {
-      dataset: { key: KEY, host: HOST, consent: consent },
+      dataset: withKey ? { key: KEY, host: HOST, consent } : { consent },
       src: `${HOST}/sdk/mira.js`,
     };
     Object.assign(globalThis, {
@@ -872,6 +1102,19 @@ describe("script tag boot", () => {
     delete (globalThis as any).window;
     delete (globalThis as any).document;
   };
+
+  test("a queued denial survives a script tag without a key and a later init", async () => {
+    const stub: any = function (...args: unknown[]) {
+      (stub.q ||= []).push(args);
+    };
+    stub("consent", { analytics: false, marketing: false });
+    stub("init", { key: KEY, host: HOST });
+    const writes: string[] = [];
+    const fake = await boot({ dataLayer: granted(), mira: stub }, writes, "auto", false);
+    await tick(700);
+    expect(fake.storage.data.size).toBe(0);
+    forget();
+  });
 
   test("on a Shopify storefront the visitor id is shared with checkout", async () => {
     const writes: string[] = [];

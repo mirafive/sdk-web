@@ -26,9 +26,10 @@
 
 ### Changed
 
-- The script tag grew from 8.4 to 9.6 kB gzip (the Shopify adapter and the cart hook).
-- `consent` also accepts `'shopify'`. A queued `mira('consent', …)` before the script loaded is now
-  the option of `init`, not a call after it.
+- The script tag grew from 8.4 to 9.6 kB gzip; the pixel file is 10.9 kB (its own build budget is 11 kB) (the Shopify adapter and the cart hook).
+- `consent` also accepts `'shopify'`. A `consent` call made before `init` (also one queued before
+  the script loaded) is now `init`'s own choice, not a call after it, so a CMP's or Consent Mode's
+  grant cannot come first.
 
 ## 2.1.1 — 2026-11-23
 

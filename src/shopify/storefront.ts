@@ -87,6 +87,10 @@ export function shopifyStorefront(
   let running = false;
   /** A clear went out at once for the current wish, so it is not sent again before the queue's. */
   let earlyClear = false;
+  /** That clear, while it is on its way: the queue sends nothing after it until it has landed. */
+  let early: Promise<boolean> | undefined;
+  /** Whether MIRA's cookie may be on the device: written by this page or found, not yet deleted. */
+  let cookie = false;
 
   const send = (value: string, keepalive: boolean) =>
     host
@@ -108,6 +112,8 @@ export function shopifyStorefront(
 
   const finish = (done: Want) => {
     if (done.value) {
+      // Consent may have ended while the write was on its way: nothing is kept in the tab then.
+      if (!id) return;
       synced = done.key;
       session()?.setItem(SYNCED_KEY, done.key);
     } else {
@@ -124,6 +130,7 @@ export function shopifyStorefront(
     try {
       while (want) {
         const current = want;
+        await early;
         if (!(await send(current.value, keepalive))) return; // kept: the next sync tries again
         // Only the latest wish is done; an earlier one that was replaced is just followed.
         if (want === current) {
@@ -147,10 +154,14 @@ export function shopifyStorefront(
       earlyClear = false;
       session()?.setItem(OPEN_KEY, "1");
     }
-    if (!running) return void pump(keepalive);
+    if (!running) {
+      void pump(keepalive);
+      return;
+    }
     if (!next.value && !earlyClear) {
       earlyClear = true;
-      void send("", true);
+      // Kept: an id written next must not be overtaken by this clear on its way.
+      early = send("", true);
     }
   };
 
@@ -172,6 +183,7 @@ export function shopifyStorefront(
       if (next) {
         pendingClear = false;
         synced ??= session()?.getItem(SYNCED_KEY) ?? undefined;
+        cookie = true;
         host.document.cookie = `${VISITOR_COOKIE}=${next}; Max-Age=${YEAR_S}; Path=/; SameSite=Lax${host.location.protocol === "https:" ? "; Secure" : ""}`;
         sync(false);
       } else {
@@ -180,14 +192,17 @@ export function shopifyStorefront(
         // the closing page is found by the next one.
         if (!looked) {
           looked = true;
-          const left =
-            readCookie(host, VISITOR_COOKIE) !== undefined ||
-            session()?.getItem(SYNCED_KEY) ||
-            session()?.getItem(OPEN_KEY);
-          if (left) pendingClear = true;
+          cookie = readCookie(host, VISITOR_COOKIE) !== undefined;
+          if (cookie || session()?.getItem(SYNCED_KEY) || session()?.getItem(OPEN_KEY)) {
+            pendingClear = true;
+          }
         }
         if (hadId) pendingClear = true;
-        host.document.cookie = `${VISITOR_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax`;
+        // Deleted only where there is something to delete.
+        if (cookie) {
+          cookie = false;
+          host.document.cookie = `${VISITOR_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax`;
+        }
         if (pendingClear) sync(true);
       }
     } catch (error) {

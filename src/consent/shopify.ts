@@ -97,6 +97,7 @@ export function followShopify(
   adapters: readonly ConsentAdapter[],
 ): () => void {
   let bannerFound = false;
+  let answered = false;
   let stopShopify = () => {};
   const stopBanners = autoConsent(
     host,
@@ -105,12 +106,18 @@ export function followShopify(
     () => {
       bannerFound = true;
       stopShopify();
-      emit({ analytics: "unknown", marketing: "unknown" });
+      // Before Shopify has answered nothing may be written: hold at "unknown" until the banner
+      // speaks. After it has, the banner's own answer follows at once (a stored "yes" keeps the
+      // visitor's id, a "no" removes it, a banner still waiting says "unknown" itself); a
+      // made-up "unknown" in between would clear the storage and mint a new id on every page.
+      if (!answered) emit({ analytics: "unknown", marketing: "unknown" });
     },
   );
   if (!bannerFound && shopify.detect(host)) {
     stopShopify = shopify.subscribe(host, (status) => {
-      if (!bannerFound) emit(status);
+      if (bannerFound) return;
+      if (status.analytics !== "unknown") answered = true;
+      emit(status);
     });
   }
   return () => {

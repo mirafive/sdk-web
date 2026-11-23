@@ -184,6 +184,8 @@ export function createMira<Events extends EventMap = EventMap>(
   /** The `event_id` of the current page's `$pageview`: its `$engagement` events name it. */
   let pageEventId: string | undefined;
   let onAnonymousId: MiraOptions["onAnonymousId"];
+  /** A `consent` call made before `init`: it wins over the option, as it did when replayed after. */
+  let pendingConsent: "auto" | "shopify" | ConsentChoice | undefined;
 
   const store = createStore(() => host.localStorage);
   const analytics = () => status.analytics === "granted";
@@ -390,6 +392,14 @@ export function createMira<Events extends EventMap = EventMap>(
     hintsAsked = false;
   }
 
+  /** The cookie and cart hook of Shopify mode, unless the page brought its own. */
+  function wireShopify() {
+    if (onAnonymousId || !host.Shopify) return;
+    onAnonymousId = shopifyStorefront(host, warn);
+    // Consent may be given already: tell the hook about the id it has not heard of.
+    if (analytics()) announceId();
+  }
+
   function announceId() {
     try {
       onAnonymousId?.(anonymousId);
@@ -421,10 +431,11 @@ export function createMira<Events extends EventMap = EventMap>(
       return;
     }
     debug = settings.debug === true;
+    const choice = pendingConsent ?? settings.consent ?? "auto";
+    pendingConsent = undefined;
+    onAnonymousId = settings.onAnonymousId;
     // `consent: 'shopify'` on a storefront also shares the visitor's id with checkout.
-    onAnonymousId =
-      settings.onAnonymousId ??
-      (settings.consent === "shopify" && host.Shopify ? shopifyStorefront(host, warn) : undefined);
+    if (choice === "shopify") wireShopify();
     adapters = settings.adapters ?? defaultAdapters;
     const origin = trimHost(settings.host ?? DEFAULT_HOST);
 
@@ -480,7 +491,7 @@ export function createMira<Events extends EventMap = EventMap>(
       }
     };
 
-    followConsent(settings.consent ?? "auto");
+    followConsent(choice);
 
     // A prerendered page may never be seen. Nothing is captured or sent until it is activated.
     if ((host.document as Document & { prerendering?: boolean }).prerendering) {
@@ -558,11 +569,13 @@ export function createMira<Events extends EventMap = EventMap>(
         return warn("consent expects 'auto', 'shopify' or { analytics, marketing }");
       }
       if (!started) {
-        // Before init, the choice is applied by init (it may come from the snippet's stub queue).
-        early.unshift(() => followConsent(choice));
+        // Before init the choice is kept and becomes init's own: applied after `init` started
+        // with `auto`, the page would follow a CMP's or Consent Mode's grant first.
+        pendingConsent = choice;
         return;
       }
       followConsent(choice);
+      if (choice === "shopify") wireShopify();
     }),
     setLocation: guard("setLocation", (next: LocationInput | null) => {
       if (next === null) {

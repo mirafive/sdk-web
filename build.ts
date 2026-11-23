@@ -102,11 +102,16 @@ if (!pixel.success) {
   process.exit(1);
 }
 const kb = (size: number) => `${(size / 1024).toFixed(2)} kB`;
+/** The pixel file's own gzip budget; CI checks `mira.js` (its budget is in ci.yml). */
+const PIXEL_BUDGET = 11_264;
 for (const file of ["mira.js", "mira-shopify-pixel.js"]) {
   const bytes = await Bun.file(`${dir}/dist/${file}`).bytes();
-  console.log(
-    `dist/${file}  ${kb(bytes.length)} min  ${kb(Bun.gzipSync(bytes, { level: 9 }).length)} gzip`,
-  );
+  const gzip = Bun.gzipSync(bytes, { level: 9 }).length;
+  console.log(`dist/${file}  ${kb(bytes.length)} min  ${kb(gzip)} gzip`);
+  if (file === "mira-shopify-pixel.js" && gzip > PIXEL_BUDGET) {
+    console.error(`${file} is ${gzip} bytes gzip, over its budget of ${PIXEL_BUDGET}`);
+    process.exit(1);
+  }
 }
 
 console.log(`✓ built ${manifest.name}`);

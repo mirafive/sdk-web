@@ -3,7 +3,7 @@
 The MIRA FIVE browser SDK: consent-aware analytics and revenue attribution for websites and web
 apps. It follows the site's consent banner on its own, works cookieless until consent is given,
 captures pageviews (also in single-page apps), engagement, outbound clicks, downloads and form
-submits, and never throws into your page. About 9 kB gzip with every consent adapter; no
+submits, and never throws into your page. About 10 kB gzip with every consent adapter; no
 dependencies besides `@mirafive/protocol`.
 
 Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),

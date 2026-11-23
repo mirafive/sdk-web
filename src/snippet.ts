@@ -22,7 +22,6 @@
  */
 import type { ConsentChoice, Host } from "./consent/types";
 import { createMira, type Mira, type MiraOptions } from "./mira";
-import { shopifyStorefront } from "./shopify/storefront";
 
 type Command =
   | "init"
@@ -95,21 +94,14 @@ function boot() {
 
   // Calls made before the script loaded, in order. `consent` and `init` from the stub queue still
   // win over the script attributes, because the instance applies them when it starts.
-  // The last queued `consent` is an option of `init`, not a call after it: replayed after, the page
-  // would follow `auto` for a moment, and its fallbacks (Google Consent Mode) can grant consent
-  // before the visitor answered.
-  const queuedConsent = stubQueue.filter((entry) => entry[0] === "consent").at(-1)?.[1] as
-    | MiraOptions["consent"]
-    | undefined;
   for (const entry of stubQueue) {
     const [command, ...args] = Array.from(entry);
-    if (command !== "init" && command !== "consent") run(command as Command, args);
+    if (command !== "init") run(command as Command, args);
   }
   const queuedInit = stubQueue.find((entry) => entry[0] === "init")?.[1] as MiraOptions | undefined;
   const options =
     queuedInit ?? optionsFromScript(document.currentScript as HTMLScriptElement | null);
   if (options) {
-    if (queuedConsent !== undefined) options.consent = queuedConsent;
     instance.init(options);
   }
 }
