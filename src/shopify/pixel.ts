@@ -174,6 +174,8 @@ function bridgedStorage(
   warn: (message: string, error?: unknown) => void,
 ) {
   const data = new Map<string, string>();
+  /** Bumped by `forget`: a read that began before it is dropped, so a withdrawn id never returns. */
+  let generation = 0;
   const write = (name: string, value: string | undefined) =>
     void Promise.resolve(
       cookie.set(
@@ -200,9 +202,11 @@ function bridgedStorage(
   } as unknown as Storage;
   /** Reads the storefront's ids into the store; only called once analytics is allowed. */
   const load = async () => {
+    const started = generation;
     for (const [key, name] of Object.entries(MIRRORED)) {
       try {
         const value = await cookie.get(name);
+        if (started !== generation) return;
         if (value && !data.has(key)) data.set(key, value);
       } catch (error) {
         // No cookie access: a new visitor id; the order's attribute still joins a guest's order.
@@ -212,6 +216,8 @@ function bridgedStorage(
   };
   /** Not consented: what an earlier visit left in the cookies goes. Deleting needs no read. */
   const forget = () => {
+    generation += 1;
+    data.clear();
     for (const name of Object.values(MIRRORED)) write(name, undefined);
   };
   return { storage, load, forget };

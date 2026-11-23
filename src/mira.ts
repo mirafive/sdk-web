@@ -574,8 +574,10 @@ export function createMira<Events extends EventMap = EventMap>(
         pendingConsent = choice;
         return;
       }
-      followConsent(choice);
+      // The hook first: Shopify's answer is applied at once, and a "no" must reach it, to remove
+      // what an earlier visit left.
       if (choice === "shopify") wireShopify();
+      followConsent(choice);
     }),
     setLocation: guard("setLocation", (next: LocationInput | null) => {
       if (next === null) {

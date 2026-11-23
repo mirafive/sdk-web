@@ -129,8 +129,16 @@ export function shopifyStorefront(
     running = true;
     try {
       while (want) {
+        // A clear on its way is waited for (a newer one too), and the wish is read after that:
+        // what was wanted when the wait began may be a "no" by now.
+        let waited = early;
+        await waited;
+        while (early !== waited) {
+          waited = early;
+          await waited;
+        }
         const current = want;
-        await early;
+        if (!current) break;
         if (!(await send(current.value, keepalive))) return; // kept: the next sync tries again
         // Only the latest wish is done; an earlier one that was replaced is just followed.
         if (want === current) {

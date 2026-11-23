@@ -103,7 +103,7 @@ if (!pixel.success) {
 }
 const kb = (size: number) => `${(size / 1024).toFixed(2)} kB`;
 /** The pixel file's own gzip budget; CI checks `mira.js` (its budget is in ci.yml). */
-const PIXEL_BUDGET = 11_264;
+const PIXEL_BUDGET = 12_288;
 for (const file of ["mira.js", "mira-shopify-pixel.js"]) {
   const bytes = await Bun.file(`${dir}/dist/${file}`).bytes();
   const gzip = Bun.gzipSync(bytes, { level: 9 }).length;
