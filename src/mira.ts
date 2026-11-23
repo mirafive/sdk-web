@@ -96,10 +96,11 @@ export interface Mira<Events extends EventMap = EventMap> {
   /** A manual pageview, for example `{ status: 404 }` on your not-found page. */
   page(properties?: Record<string, unknown>): void;
   /** A custom event. Names starting with `$` are reserved for MIRA FIVE. */
+  track<Name extends keyof Events & string>(name: Name, properties?: Events[Name]): void;
+  /** `$non_interaction: true` marks an event the person did not cause: it starts no visit. */
   track<Name extends keyof Events & string>(
     name: Name,
-    /** `$non_interaction: true` marks an event the person did not cause: it starts no visit. */
-    properties?: Events[Name] & { $non_interaction?: boolean },
+    properties: Events[Name] & { $non_interaction?: boolean },
   ): void;
   /** A survey answer ("How did you hear about us?") as a touchpoint. */
   survey(input: SurveyInput): void;

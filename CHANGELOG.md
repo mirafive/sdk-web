@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.1 — 2026-11-23
+
+### Fixed
+
+- Types only: 2.1.0 changed the type of `track`'s properties, so code that forwards the properties
+  of any event (`properties?: Events[Name]`) no longer compiled. `track` has its 2.0 signature
+  again, and `$non_interaction` with typed events is a second overload. The script is unchanged.
+
 ## 2.1.0 — 2026-11-23
 
 ### Added
