@@ -15,6 +15,7 @@ import {
 import { pageKey, watchNavigation } from "./autocapture";
 import { watchEngagement, watchInteractions, type Engagement } from "./behavior";
 import { autoConsent, defaultAdapters } from "./consent/auto";
+import { followShopify } from "./consent/shopify";
 import {
   fromChoice,
   sameStatus,
@@ -25,6 +26,7 @@ import {
   type Host,
 } from "./consent/types";
 import { buildContext, readClientHints, type ClientHints, type PageInfo } from "./context";
+import { shopifyStorefront } from "./shopify/storefront";
 import { createStore, KEYS } from "./storage";
 import { Transport, type QueuedEvent } from "./transport";
 
@@ -39,14 +41,26 @@ export interface MiraOptions {
   key: string;
   /** Ingest origin. Default `https://events.mirafive.io`. */
   host?: string;
-  /** `'auto'` follows the CMP on the page (default); an object sets the state for custom banners. */
-  consent?: "auto" | ConsentChoice;
+  /**
+   * `'auto'` follows the CMP on the page (default); an object sets the state for custom banners.
+   * `'shopify'` is for a Shopify storefront: it follows Shopify's Customer Privacy API (so the shop's
+   * privacy settings and banner must be set up for its regions), switches to any other known
+   * banner that appears, and shares the visitor's id with checkout (a cookie and the cart
+   * attribute `_mira_aid`) when `window.Shopify` is there.
+   */
+  consent?: "auto" | "shopify" | ConsentChoice;
   /** What the SDK captures on its own; all on by default. `false` turns everything off. */
   autocapture?: boolean | AutocaptureOptions;
   /** The CMP adapters `'auto'` tries, in order. Pass a subset to keep the bundle small. */
   adapters?: readonly ConsentAdapter[];
   /** Logs dropped events and failed batches to the console. */
   debug?: boolean;
+  /**
+   * For platform integrations (Shopify's cart attribute): called with the visitor's anonymous id
+   * when analytics consent makes one or `reset` makes a new one, and with `undefined` whenever
+   * consent is known not to be given, so an integration can remove what an earlier visit left.
+   */
+  onAnonymousId?: (anonymousId: string | undefined) => void;
 }
 
 export interface AutocaptureOptions {
@@ -106,7 +120,7 @@ export interface Mira<Events extends EventMap = EventMap> {
   survey(input: SurveyInput): void;
   identify(userId: string, traits?: Record<string, unknown>, options?: IdentifyOptions): void;
   group(groupId: string, traits?: Record<string, unknown>): void;
-  consent(choice: "auto" | ConsentChoice): void;
+  consent(choice: "auto" | "shopify" | ConsentChoice): void;
   /**
    * A location the site already has (never one the SDK asks the browser for). Kept in memory and
    * sent only with analytics consent, rounded to 2 decimals (about 1 km). `null` forgets it.
@@ -169,6 +183,7 @@ export function createMira<Events extends EventMap = EventMap>(
   let engagement: Engagement | undefined;
   /** The `event_id` of the current page's `$pageview`: its `$engagement` events name it. */
   let pageEventId: string | undefined;
+  let onAnonymousId: MiraOptions["onAnonymousId"];
 
   const store = createStore(() => host.localStorage);
   const analytics = () => status.analytics === "granted";
@@ -307,14 +322,20 @@ export function createMira<Events extends EventMap = EventMap>(
     }
     const before = status;
     status = next;
+    // Told once after a "no", so an integration removes what an earlier visit left (Shopify's cart).
+    let forget = next.analytics === "denied";
     if (!sameStatus(before, next)) {
       const wasConsented = before.analytics === "granted";
       // An engagement sent under the new tier must not point at a pageview of the old one: that
       // would tie an event without ids to one with them (or the other way round).
       if (wasConsented !== analytics()) pageEventId = undefined;
       if (!wasConsented && analytics()) upgrade();
-      else if (wasConsented && !analytics()) downgrade();
+      else if (wasConsented && !analytics()) {
+        downgrade();
+        forget = true;
+      }
     }
+    if (forget) announceId();
     // After the tier switch, so a waiting first pageview carries the new anonymous id.
     onFirstConsent?.();
   }
@@ -335,6 +356,7 @@ export function createMira<Events extends EventMap = EventMap>(
     groupId ??= store.get(KEYS.groupId) ?? undefined;
     store.set(KEYS.userId, userId);
     store.set(KEYS.groupId, groupId);
+    announceId();
 
     // Events a previous page could not deliver (stored only because consent was given then).
     try {
@@ -368,11 +390,21 @@ export function createMira<Events extends EventMap = EventMap>(
     hintsAsked = false;
   }
 
-  function followConsent(choice: "auto" | ConsentChoice) {
+  function announceId() {
+    try {
+      onAnonymousId?.(anonymousId);
+    } catch (error) {
+      warn("onAnonymousId failed", error);
+    }
+  }
+
+  function followConsent(choice: "auto" | "shopify" | ConsentChoice) {
     stopAuto?.();
     stopAuto = undefined;
     if (choice === "auto") {
       stopAuto = autoConsent(host, (next) => applyConsent(next), adapters);
+    } else if (choice === "shopify") {
+      stopAuto = followShopify(host, (next) => applyConsent(next), adapters);
     } else {
       applyConsent(fromChoice(choice));
     }
@@ -389,6 +421,10 @@ export function createMira<Events extends EventMap = EventMap>(
       return;
     }
     debug = settings.debug === true;
+    // `consent: 'shopify'` on a storefront also shares the visitor's id with checkout.
+    onAnonymousId =
+      settings.onAnonymousId ??
+      (settings.consent === "shopify" && host.Shopify ? shopifyStorefront(host, warn) : undefined);
     adapters = settings.adapters ?? defaultAdapters;
     const origin = trimHost(settings.host ?? DEFAULT_HOST);
 
@@ -517,9 +553,9 @@ export function createMira<Events extends EventMap = EventMap>(
       // Without consent the ingest drops the group id, so the event would say nothing.
       if (analytics()) enqueue("group", "$group", { traits: cleanProperties(traits) });
     }),
-    consent: guard("consent", (choice: "auto" | ConsentChoice) => {
-      if (choice !== "auto" && (!choice || typeof choice !== "object")) {
-        return warn("consent expects 'auto' or { analytics, marketing }");
+    consent: guard("consent", (choice: "auto" | "shopify" | ConsentChoice) => {
+      if (choice !== "auto" && choice !== "shopify" && (!choice || typeof choice !== "object")) {
+        return warn("consent expects 'auto', 'shopify' or { analytics, marketing }");
       }
       if (!started) {
         // Before init, the choice is applied by init (it may come from the snippet's stub queue).
@@ -558,6 +594,7 @@ export function createMira<Events extends EventMap = EventMap>(
       if (analytics()) {
         anonymousId = uuidv7();
         store.set(KEYS.anonymousId, anonymousId);
+        announceId();
       }
     }),
     flush: () => {

@@ -14,11 +14,15 @@
  *   first-party proxy works without extra settings.
  * - `data-consent`: `auto` (default, follow the CMP), `granted`, `denied`, or `analytics`
  *   (analytics granted, marketing denied).
+ * - `data-consent="shopify"` on a Shopify storefront follows Shopify's consent (and any other
+ *   banner that appears) and, with analytics consent, writes the visitor's id to a cookie and the
+ *   cart attribute `_mira_aid`. Without it a Shopify page behaves like any other.
  * - `data-autocapture="false"`: turn off all autocapture. `data-spa`, `data-engagement`,
  *   `data-outbound`, `data-downloads`, `data-forms` set to `"false"` turn off one part.
  */
-import type { ConsentChoice } from "./consent/types";
+import type { ConsentChoice, Host } from "./consent/types";
 import { createMira, type Mira, type MiraOptions } from "./mira";
+import { shopifyStorefront } from "./shopify/storefront";
 
 type Command =
   | "init"
@@ -33,11 +37,12 @@ type Command =
   | "flush";
 type Stub = ((...args: unknown[]) => unknown) & { q?: ArrayLike<unknown>[] };
 
-const CONSENT: Record<string, "auto" | ConsentChoice> = {
+const CONSENT: Record<string, "auto" | "shopify" | ConsentChoice> = {
   auto: "auto",
   granted: { analytics: true, marketing: true },
   denied: { analytics: false, marketing: false },
   analytics: { analytics: true, marketing: false },
+  shopify: "shopify",
 };
 
 function optionsFromScript(script: HTMLScriptElement | null): MiraOptions | undefined {
@@ -74,7 +79,8 @@ function boot() {
   if ((host.mira as { loaded?: boolean } | undefined)?.loaded) return;
 
   const stubQueue = Array.from((host.mira as Stub | undefined)?.q ?? []);
-  const instance: Mira = createMira();
+  // The page's window, named so a test can stand in for it.
+  const instance: Mira = createMira(undefined, window as unknown as Host);
 
   const run = (command: Command, args: unknown[]): unknown => {
     const call = instance[command] as ((...values: unknown[]) => unknown) | undefined;
@@ -89,14 +95,23 @@ function boot() {
 
   // Calls made before the script loaded, in order. `consent` and `init` from the stub queue still
   // win over the script attributes, because the instance applies them when it starts.
+  // The last queued `consent` is an option of `init`, not a call after it: replayed after, the page
+  // would follow `auto` for a moment, and its fallbacks (Google Consent Mode) can grant consent
+  // before the visitor answered.
+  const queuedConsent = stubQueue.filter((entry) => entry[0] === "consent").at(-1)?.[1] as
+    | MiraOptions["consent"]
+    | undefined;
   for (const entry of stubQueue) {
     const [command, ...args] = Array.from(entry);
-    if (command !== "init") run(command as Command, args);
+    if (command !== "init" && command !== "consent") run(command as Command, args);
   }
   const queuedInit = stubQueue.find((entry) => entry[0] === "init")?.[1] as MiraOptions | undefined;
   const options =
     queuedInit ?? optionsFromScript(document.currentScript as HTMLScriptElement | null);
-  if (options) instance.init(options);
+  if (options) {
+    if (queuedConsent !== undefined) options.consent = queuedConsent;
+    instance.init(options);
+  }
 }
 
 try {

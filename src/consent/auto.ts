@@ -35,6 +35,8 @@ export function autoConsent(
   host: Host,
   emit: (status: ConsentStatus, adapter: string) => void,
   adapters: readonly ConsentAdapter[] = defaultAdapters,
+  /** Called once when a banner is detected, before it has said anything (its script may still load). */
+  onDetect?: (adapter: ConsentAdapter) => void,
 ): () => void {
   let stop: (() => void) | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -48,7 +50,10 @@ export function autoConsent(
       let found = false;
       try {
         found = adapter.detect(host);
-        if (found) stop = adapter.subscribe(host, (status) => emit(status, adapter.name));
+        if (found) {
+          onDetect?.(adapter);
+          stop = adapter.subscribe(host, (status) => emit(status, adapter.name));
+        }
       } catch {
         // A broken CMP must never break the host page or the SDK; try the next one.
         found = false;

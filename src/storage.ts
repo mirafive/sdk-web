@@ -1,7 +1,11 @@
 /**
  * The only door to device storage. It stays shut until analytics consent opens it: without consent
  * the SDK must not read from or write to the device at all (TDDDG §25, docs/data-collection.md,
- * T0). Deleting is always allowed, because revoking consent must remove what was stored.
+ * T0). Deleting is always allowed, because revoking consent must remove what was stored. The one
+ * read below T1 is Shopify mode's (`consent: 'shopify'`, `shopify/storefront.ts`): once per page it
+ * looks for MIRA's own cookie `mira_aid` and the tab's records `mira_cart` and `mira_cart_open`, and,
+ * while a clear is pending, Shopify's `cart` cookie, only to delete the id and empty the cart's
+ * attribute when consent is not given.
  */
 export const KEYS = {
   anonymousId: "mira_aid",

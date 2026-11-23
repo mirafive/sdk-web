@@ -87,10 +87,26 @@ if (!script.success) {
   for (const log of script.logs) console.error(log);
   process.exit(1);
 }
-const bytes = await Bun.file(`${dir}/dist/mira.js`).bytes();
+
+// Pixel mode for Shopify custom pixels: its own file, so the script every site loads stays small.
+const pixel = await Bun.build({
+  entrypoints: [`${dir}/src/shopify/pixel-snippet.ts`],
+  outdir: `${dir}/dist`,
+  naming: "mira-shopify-pixel.js",
+  format: "iife",
+  target: "browser",
+  minify: true,
+});
+if (!pixel.success) {
+  for (const log of pixel.logs) console.error(log);
+  process.exit(1);
+}
 const kb = (size: number) => `${(size / 1024).toFixed(2)} kB`;
-console.log(
-  `dist/mira.js  ${kb(bytes.length)} min  ${kb(Bun.gzipSync(bytes, { level: 9 }).length)} gzip`,
-);
+for (const file of ["mira.js", "mira-shopify-pixel.js"]) {
+  const bytes = await Bun.file(`${dir}/dist/${file}`).bytes();
+  console.log(
+    `dist/${file}  ${kb(bytes.length)} min  ${kb(Bun.gzipSync(bytes, { level: 9 }).length)} gzip`,
+  );
+}
 
 console.log(`✓ built ${manifest.name}`);

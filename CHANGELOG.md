@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.2.0 — 2026-11-23
+
+### Added
+
+- Shopify, opt-in: `data-consent="shopify"` (`consent: 'shopify'`) follows the Customer Privacy API
+  on a storefront. A banner on the page (even one still loading) decides instead and Shopify's
+  answer is not used; one that appears later takes over then. It is never detected on its own, so a
+  Shopify page without the option behaves as before.
+- With the option and analytics consent, the tag writes the visitor's id to the cookie `mira_aid`
+  and the cart attribute `_mira_aid` (the order's `note_attributes`; visible in the theme's
+  `cart.attributes` and in the admin), so checkout and server connectors join the visit. Consent
+  that is not given removes the cookie and empties the attribute, also on a later page or when the
+  request was lost with the closing page (the tab keeps a record until a clear succeeded). Cart
+  writes go through one queue, so the last wish wins.
+- Pixel mode for Shopify custom pixels, its own file `mira-shopify-pixel.js` (also
+  `startShopifyPixel`): `mira('shopifyPixel', { analytics, init, browser, customerPrivacy, key })`.
+  The page comes from each event's `context.document`, the visitor's id through `browser.cookie`,
+  consent from `init.customerPrivacy` and `customerPrivacy.subscribe` (`api.customerPrivacy` in the
+  pixel editor). Shopify's standard events are sent as `product_viewed`, `product_added_to_cart`,
+  `checkout_started`, `payment_info_submitted` and `checkout_completed`, with no money: revenue
+  comes from the shop's server. Pageviews are for checkout pages unless `pages: 'all'`.
+- `onAnonymousId`, an option for platform integrations: called when analytics consent makes a
+  visitor id or `reset` makes a new one, and with `undefined` whenever consent is denied.
+
+### Changed
+
+- The script tag grew from 8.4 to 9.6 kB gzip (the Shopify adapter and the cart hook).
+- `consent` also accepts `'shopify'`. A queued `mira('consent', …)` before the script loaded is now
+  the option of `init`, not a call after it.
+
 ## 2.1.1 — 2026-11-23
 
 ### Fixed

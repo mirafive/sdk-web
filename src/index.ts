@@ -25,12 +25,15 @@ export {
   consentMode,
   cookiebot,
   defaultAdapters,
+  shopify,
   tcf,
   usercentrics,
   type ConsentAdapter,
   type ConsentChoice,
   type ConsentStatus,
 } from "./consent";
+export { startShopifyPixel, type ShopifyEvent, type ShopifyPixelInput } from "./shopify/pixel";
+export { CART_ATTRIBUTE, shopifyStorefront, VISITOR_COOKIE } from "./shopify/storefront";
 export { eventIdFor, uuidv7 } from "@mirafive/protocol";
 export { createNoopMira } from "./noop";
 export { VERSION } from "./version";

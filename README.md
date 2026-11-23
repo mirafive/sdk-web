@@ -3,7 +3,7 @@
 The MIRA FIVE browser SDK: consent-aware analytics and revenue attribution for websites and web
 apps. It follows the site's consent banner on its own, works cookieless until consent is given,
 captures pageviews (also in single-page apps), engagement, outbound clicks, downloads and form
-submits, and never throws into your page. About 8 kB gzip with every consent adapter; no
+submits, and never throws into your page. About 9 kB gzip with every consent adapter; no
 dependencies besides `@mirafive/protocol`.
 
 Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),
@@ -147,7 +147,7 @@ linked to the visit.
 | `identify(userId, traits?, { externalIds }?)`                | Who the user is. Traits like `email` are encrypted at rest. `externalIds` (`stripe_customer`, `revenuecat_app_user`, `shopify_customer`, `shopware_customer`) link connector money to the user. |
 | `group(groupId, traits?)`                                    | The company or account (B2B).                                                                                                                                                                   |
 | `survey({ source \| channel, answer?, medium?, campaign? })` | A survey answer as a touchpoint.                                                                                                                                                                |
-| `consent("auto" \| { analytics, marketing })`                | Follow the CMP, or set the state from a custom banner.                                                                                                                                          |
+| `consent("auto" \| "shopify" \| { analytics, marketing })`   | Follow the CMP (`"shopify"`: Shopify's consent, see Shopify), or set the state from a custom banner.                                                                                            |
 | `setLocation({ latitude, longitude } \| null)`               | A location the site already has, rounded to about 1 km, only with consent.                                                                                                                      |
 | `reset()`                                                    | On logout: forgets the user and starts a new anonymous id.                                                                                                                                      |
 | `flush()`                                                    | Sends now. Resolves when done; never rejects.                                                                                                                                                   |
@@ -232,8 +232,70 @@ so a returning visitor's pageview already carries their consent.
 | consentmanager                    | `__cmp('getCMPData')`, `__cmp('addEventListener', ['consent', …])`               | TCF purposes as below; classic setups: c53 → analytics, c52 → marketing (check your purpose ids)                                                                                                                    |
 | CCM19                             | `CCM.acceptedEmbeddings`, `ccm19WidgetClosed`                                    | Add MIRA FIVE as an embedding: accepted → analytics. A second embedding "MIRA FIVE Marketing" → marketing.                                                                                                          |
 | Borlabs Cookie 3                  | `BorlabsCookie.Consents`, `borlabs-cookie-consent-saved`                         | `statistics` group (or a `mira-five` service) → analytics, `marketing` group → marketing                                                                                                                            |
+| Shopify Customer Privacy API      | `Shopify.customerPrivacy`, `visitorConsentCollected`                             | `analyticsProcessingAllowed()` → analytics, `marketingAllowed()` → marketing; not allowed while `shouldShowBanner()` = not answered                                                                                 |
 | Any TCF 2.2 CMP                   | `__tcfapi('addEventListener', 2, …)`                                             | analytics: purpose 1 and 8 or 9. marketing: purposes 1, 2, 3, 4 and 7. `gdprApplies: false` → both granted.                                                                                                         |
 | Google Consent Mode v2 (fallback) | `gtag('consent', …)` commands in `dataLayer`                                     | `analytics_storage` → analytics; `ad_storage` and `ad_user_data` → marketing. A `default` of denied without an update = not answered. Used only after page load when no CMP was found.                              |
+
+## Shopify
+
+**Storefront.** Add `data-consent="shopify"` to the script tag (`consent: 'shopify'` with npm). It
+follows Shopify's Customer Privacy API, so the shop's privacy settings and banner must be set up for
+its regions: where they are not, Shopify answers "allowed" for everyone. A banner from the
+table above that is on the page when the script starts (its script may still be loading) owns the
+decision from the start, so Shopify's "allowed" never writes to the device before the visitor has
+answered it. A banner that only appears later, through a tag manager, takes over then, after
+Shopify's answer was already used and storage was written. Without the
+option a Shopify page behaves like any other (no Shopify adapter, no cookie, no cart attribute).
+With npm, `consent: 'shopify'` does the same; nothing else is needed.
+
+With analytics consent the tag writes the visitor's id to the cookie `mira_aid` and to the cart
+attribute `_mira_aid`. Shopify copies a cart attribute to the order (`note_attributes`), so a server
+connector can join a guest's order to their visit. The name and the value (the bare anonymous id;
+empty means none) are stable. The attribute is not private: it is in the theme's `cart.attributes`
+and on the order in the admin. When consent is not given, also on a later page than the "yes", the
+cookie is removed and the attribute emptied. Identify a logged-in customer in the theme:
+
+```liquid
+{% if customer %}
+  <script>mira('identify', '{{ customer.id }}', {}, { externalIds: { shopify_customer: '{{ customer.id }}' } });</script>
+{% endif %}
+```
+
+**Checkout.** The pixel can only see Shopify's own consent answer. A store with its own cookie banner
+must connect it to Shopify's customer privacy settings (the banner reports its choice to Shopify)
+before the pixel is added; otherwise a visitor who declined the banner can still count as allowed
+in checkout. It runs in a sandbox where the script tag cannot run, so a custom pixel (Settings →
+Customer events → Add custom pixel, permission "Not required") runs pixel mode. It is its own file,
+`mira-shopify-pixel.js`, so the script every site loads stays small:
+
+```js
+window.mira =
+  window.mira ||
+  function () {
+    (mira.q = mira.q || []).push(arguments);
+  };
+mira("shopifyPixel", {
+  analytics,
+  init,
+  browser,
+  customerPrivacy: typeof api !== "undefined" ? api.customerPrivacy : undefined,
+  key: "mira_pk_…",
+});
+const script = document.createElement("script");
+script.async = true;
+script.src = "https://cdn.mirafive.io/sdk/v2/mira-shopify-pixel.js";
+document.head.appendChild(script);
+```
+
+Pixel mode takes the page from each event's `context.document`, the visitor's id from the storefront
+cookie through `browser.cookie`, and consent from `init.customerPrivacy` and
+`customerPrivacy.subscribe('visitorConsentCollected', …)`. It sends `product_viewed`,
+`product_added_to_cart`, `checkout_started`, `payment_info_submitted` and `checkout_completed`
+(`order_id`, `total` and `currency` as plain properties), and a `$pageview` for checkout pages. The
+theme's script tag owns storefront pageviews; pass `pages: 'all'` in a shop without it. An event
+waits until a page URL is known, because the pixel's requests carry `Origin: null` and the ingest
+accepts those only with a page on the project's domains. It never sends money: a public key cannot
+create revenue, so revenue comes from the shop's server.
 
 ## Delivery
 
