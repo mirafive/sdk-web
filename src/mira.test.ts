@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 import { validateEvent } from "@mirafive/protocol";
 
-import { createMira, type Mira, type MiraOptions } from "./mira";
+import { createMira, type EventMap, type Mira, type MiraOptions } from "./mira";
 import { fakeHost, tick } from "./test/fake-host";
 
 const KEY = "pk_test_123";
@@ -678,5 +678,11 @@ describe("2.0 additions", () => {
 test("typed events accept $non_interaction", () => {
   const typed = (mira: Mira<{ video_progress: { percent: number } }>) =>
     mira.track("video_progress", { percent: 50, $non_interaction: true });
-  expect(typeof typed).toBe("function");
+  // A wrapper that forwards the properties of any event still type-checks (2.1.0 broke this).
+  const forward = <Events extends EventMap, Name extends keyof Events & string>(
+    mira: Mira<Events>,
+    name: Name,
+    properties?: Events[Name],
+  ) => mira.track(name, properties);
+  expect([typeof typed, typeof forward]).toEqual(["function", "function"]);
 });
