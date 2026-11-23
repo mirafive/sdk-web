@@ -96,7 +96,11 @@ export interface Mira<Events extends EventMap = EventMap> {
   /** A manual pageview, for example `{ status: 404 }` on your not-found page. */
   page(properties?: Record<string, unknown>): void;
   /** A custom event. Names starting with `$` are reserved for MIRA FIVE. */
-  track<Name extends keyof Events & string>(name: Name, properties?: Events[Name]): void;
+  track<Name extends keyof Events & string>(
+    name: Name,
+    /** `$non_interaction: true` marks an event the person did not cause: it starts no visit. */
+    properties?: Events[Name] & { $non_interaction?: boolean },
+  ): void;
   /** A survey answer ("How did you hear about us?") as a touchpoint. */
   survey(input: SurveyInput): void;
   identify(userId: string, traits?: Record<string, unknown>, options?: IdentifyOptions): void;
@@ -162,6 +166,8 @@ export function createMira<Events extends EventMap = EventMap>(
   let hints: ClientHints | undefined;
   let hintsAsked = false;
   let engagement: Engagement | undefined;
+  /** The `event_id` of the current page's `$pageview`: its `$engagement` events name it. */
+  let pageEventId: string | undefined;
 
   const store = createStore(() => host.localStorage);
   const analytics = () => status.analytics === "granted";
@@ -208,8 +214,8 @@ export function createMira<Events extends EventMap = EventMap>(
     event: string,
     extra: Partial<WireEvent> = {},
     at: PageInfo = pageNow(),
-  ) {
-    if (!transport) return;
+  ): string | undefined {
+    if (!transport) return undefined;
     const consented = analytics();
     const queued: QueuedEvent = {
       event_id: uuidv7(),
@@ -230,7 +236,9 @@ export function createMira<Events extends EventMap = EventMap>(
     }
     if (extra.traits) queued.traits = extra.traits;
     if (extra.external_ids) queued.external_ids = extra.external_ids;
+    if (extra.page_event_id) queued.page_event_id = extra.page_event_id;
     transport.enqueue(queued);
+    return queued.event_id;
   }
 
   /**
@@ -251,7 +259,7 @@ export function createMira<Events extends EventMap = EventMap>(
   function capturePage(properties?: Record<string, unknown>) {
     reportEngagement(false);
     advancePage();
-    enqueue("page", "$pageview", { properties: cleanProperties(properties) });
+    pageEventId = enqueue("page", "$pageview", { properties: cleanProperties(properties) });
     engagement?.restart();
   }
 
@@ -264,7 +272,14 @@ export function createMira<Events extends EventMap = EventMap>(
     if (!engagement || !page.url) return;
     const numbers = engagement.take(final);
     if (numbers.engaged_ms < MIN_ENGAGED_MS) return;
-    enqueue("track", "$engagement", { properties: { ...numbers } }, page);
+    // The server puts the engagement into its pageview's visit, even when the tab is shown again
+    // an hour later. No identifier: the id of an event this page already sent.
+    enqueue(
+      "track",
+      "$engagement",
+      { properties: { ...numbers }, ...(pageEventId ? { page_event_id: pageEventId } : {}) },
+      page,
+    );
   }
 
   /** Autocapture's entry: one pageview per distinct page, however many signals fired. */
@@ -293,6 +308,9 @@ export function createMira<Events extends EventMap = EventMap>(
     status = next;
     if (!sameStatus(before, next)) {
       const wasConsented = before.analytics === "granted";
+      // An engagement sent under the new tier must not point at a pageview of the old one: that
+      // would tie an event without ids to one with them (or the other way round).
+      if (wasConsented !== analytics()) pageEventId = undefined;
       if (!wasConsented && analytics()) upgrade();
       else if (wasConsented && !analytics()) downgrade();
     }
@@ -532,6 +550,8 @@ export function createMira<Events extends EventMap = EventMap>(
       groupId = undefined;
       pendingIdentify = undefined;
       location = undefined;
+      // Nor through the page: an engagement after this must not name the previous person's pageview.
+      pageEventId = undefined;
       store.set(KEYS.userId, undefined);
       store.set(KEYS.groupId, undefined);
       if (analytics()) {

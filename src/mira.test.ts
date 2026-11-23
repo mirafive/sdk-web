@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 import { validateEvent } from "@mirafive/protocol";
 
-import { createMira, type MiraOptions } from "./mira";
+import { createMira, type Mira, type MiraOptions } from "./mira";
 import { fakeHost, tick } from "./test/fake-host";
 
 const KEY = "pk_test_123";
@@ -673,4 +673,10 @@ describe("2.0 additions", () => {
     // @ts-expect-error: wrong property value
     mira.track("signup_started", { plan: "enterprise" });
   });
+});
+
+test("typed events accept $non_interaction", () => {
+  const typed = (mira: Mira<{ video_progress: { percent: number } }>) =>
+    mira.track("video_progress", { percent: 50, $non_interaction: true });
+  expect(typeof typed).toBe("function");
 });

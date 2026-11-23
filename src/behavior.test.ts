@@ -63,6 +63,77 @@ describe("engagement", () => {
     expect(next?.context.page.title).toBe("Pricing");
   });
 
+  test("names the pageview it measures, a new one after each navigation", async () => {
+    const time = clock();
+    const fake = fakeHost();
+    const mira = createMira({ ...base, consent: t0 }, fake.host);
+    time.advance(2_000);
+    fake.navigate("/pricing");
+    await tick(150);
+    time.advance(3_000);
+    setVisibility(fake, "hidden");
+    time.advance(3_600_000);
+    setVisibility(fake, "visible");
+    time.advance(1_500);
+    setVisibility(fake, "hidden");
+    await mira.flush();
+
+    const events = [...fake.events(), ...beaconed(fake)];
+    const [landing, pricing] = named(events, "$pageview");
+    expect(landing?.event_id).not.toBe(pricing?.event_id);
+    expect(named(events, "$engagement").map((event) => event.page_event_id)).toEqual([
+      landing?.event_id,
+      // Both reports of the second page, an hour apart, name its pageview.
+      pricing?.event_id,
+      pricing?.event_id,
+    ]);
+    // Only `$engagement` carries the field.
+    expect(
+      events.filter((event) => event.event !== "$engagement" && "page_event_id" in event),
+    ).toEqual([]);
+  });
+
+  test("keeps naming the pageview when only marketing consent changes, and follows a manual page()", async () => {
+    const time = clock();
+    const fake = fakeHost();
+    const mira = createMira({ ...base, consent: { analytics: "granted" } }, fake.host);
+    time.advance(2_000);
+    mira.consent({ analytics: "granted", marketing: "granted" });
+    mira.page({ status: 404 });
+    time.advance(2_000);
+    setVisibility(fake, "hidden");
+    await mira.flush();
+
+    const events = [...fake.events(), ...beaconed(fake)];
+    const [first, manual] = named(events, "$pageview");
+    expect(named(events, "$engagement").map((event) => event.page_event_id)).toEqual([
+      first?.event_id,
+      manual?.event_id,
+    ]);
+  });
+
+  test("does not name a pageview sent under another consent tier, or before reset", async () => {
+    for (const change of ["revoke", "grant", "reset"] as const) {
+      const time = clock();
+      const fake = fakeHost();
+      const mira = createMira(
+        { ...base, consent: change === "grant" ? t0 : { analytics: "granted" } },
+        fake.host,
+      );
+      time.advance(2_000);
+      if (change === "revoke") mira.consent({ analytics: "denied" });
+      if (change === "grant") mira.consent({ analytics: "granted" });
+      if (change === "reset") mira.reset();
+      time.advance(2_000);
+      setVisibility(fake, "hidden");
+      await mira.flush();
+
+      const [engagement] = named([...fake.events(), ...beaconed(fake)], "$engagement");
+      expect(engagement?.properties.engaged_ms).toBe(4_000);
+      expect(engagement && "page_event_id" in engagement).toBe(false);
+    }
+  });
+
   test("is not sent when the page was left within a second", async () => {
     const time = clock();
     const fake = fakeHost();
