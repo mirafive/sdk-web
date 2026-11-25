@@ -178,13 +178,13 @@ describe("pixel mode", () => {
     expect(fake.events().map((event) => event.event)).toEqual(["$pageview", "$consent_changed"]);
   });
 
-  test("a logged-in customer is identified with their Shopify id", async () => {
+  test("a logged-in customer is identified as shopify:<id>, like the theme snippet", async () => {
     const fake = fakeHost();
     const pixel = fakePixel({ analytics: true, customer: "8812" });
     const mira = await startShopifyPixel(fake.host, pixel.input);
     await mira!.flush();
     const identify = fake.events().find((event) => event.type === "identify")!;
-    expect(identify.user_id).toBe("8812");
+    expect(identify.user_id).toBe("shopify:8812");
     expect(identify.external_ids).toEqual({ shopify_customer: "8812" });
   });
 

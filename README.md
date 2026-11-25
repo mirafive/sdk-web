@@ -253,11 +253,11 @@ attribute `_mira_aid`. Shopify copies a cart attribute to the order (`note_attri
 connector can join a guest's order to their visit. The name and the value (the bare anonymous id;
 empty means none) are stable. The attribute is not private: it is in the theme's `cart.attributes`
 and on the order in the admin. When consent is not given, also on a later page than the "yes", the
-cookie is removed and the attribute emptied. Identify a logged-in customer in the theme:
+cookie is removed and the attribute emptied. Identify a logged-in customer in the theme, with a user id that names its source (a bare id could collide with your own user ids):
 
 ```liquid
 {% if customer %}
-  <script>mira('identify', '{{ customer.id }}', {}, { externalIds: { shopify_customer: '{{ customer.id }}' } });</script>
+  <script>mira('identify', 'shopify:{{ customer.id }}', {}, { externalIds: { shopify_customer: '{{ customer.id }}' } });</script>
 {% endif %}
 ```
 

@@ -379,7 +379,8 @@ export async function startShopifyPixel(
         const customer = init?.data?.customer?.id;
         if (customer && !identified) {
           identified = true;
-          mira.identify(customer, {}, { externalIds: { shopify_customer: customer } });
+          // Namespaced like the theme snippet: a bare id could collide with the shop's own user ids.
+          mira.identify(`shopify:${customer}`, {}, { externalIds: { shopify_customer: customer } });
         }
         eventAt = eventTime(event.timestamp);
         if (event.name === "page_viewed") {
