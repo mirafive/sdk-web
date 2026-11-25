@@ -188,6 +188,16 @@ describe("pixel mode", () => {
     expect(identify.external_ids).toEqual({ shopify_customer: "8812" });
   });
 
+  test("a customer id that comes as a Shopify GID is identified like the plain one", async () => {
+    const fake = fakeHost();
+    const pixel = fakePixel({ analytics: true, customer: "gid://shopify/Customer/8812" });
+    const mira = await startShopifyPixel(fake.host, pixel.input);
+    await mira!.flush();
+    const identify = fake.events().find((event) => event.type === "identify")!;
+    expect(identify.user_id).toBe("shopify:8812");
+    expect(identify.external_ids).toEqual({ shopify_customer: "8812" });
+  });
+
   test("checkout events carry the order as plain properties and never a revenue event", async () => {
     const fake = fakeHost();
     const pixel = fakePixel({ analytics: true });

@@ -376,7 +376,7 @@ export async function startShopifyPixel(
       try {
         note(event.context?.document);
         if (!current.href || !mira) return;
-        const customer = init?.data?.customer?.id;
+        const customer = plain(init?.data?.customer?.id);
         if (customer && !identified) {
           identified = true;
           // Namespaced like the theme snippet: a bare id could collide with the shop's own user ids.
