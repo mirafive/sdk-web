@@ -74,31 +74,52 @@ export const shopify: ConsentAdapter = {
    */
   subscribe(host, emit) {
     const global = () => host.Shopify as ShopifyGlobal | undefined;
-    let done = false;
+    /** Stopped by the caller: nothing is read or emitted after it, whatever Shopify answers. */
+    let stopped = false;
+    /** The look is over (found, or five seconds): a late `loadFeatures` answer is still heard. */
+    let looking = true;
     let asked = false;
+    let warned = false;
     let timer: ReturnType<typeof setInterval> | undefined;
+    const warnOnce = (message: string, error: unknown) => {
+      if (warned) return;
+      warned = true;
+      console.warn(`MIRA FIVE: ${message}`, error);
+    };
     const stopLooking = () => {
-      done = true;
+      looking = false;
       clearInterval(timer);
       host.document.removeEventListener("DOMContentLoaded", look);
     };
-    /** Emits what the API says, once it is there. */
+    /** Emits what the API says, once it is there. A broken API counts as not there yet. */
     const read = () => {
-      const privacy = global()?.customerPrivacy;
-      if (privacy) emit(fromCustomerPrivacy(privacy));
-      return Boolean(privacy);
+      if (stopped) return false;
+      let status: ConsentStatus | undefined;
+      try {
+        const privacy = global()?.customerPrivacy;
+        if (privacy) status = fromCustomerPrivacy(privacy);
+      } catch (error) {
+        warnOnce("Shopify's consent API threw", error);
+      }
+      if (status) emit(status);
+      return Boolean(status);
     };
     const started = Date.now();
     function look() {
-      if (done) return;
+      if (!looking || stopped) return;
       if (read()) return stopLooking();
-      const api = global();
-      if (api?.loadFeatures && !asked) {
-        asked = true;
-        api.loadFeatures([{ name: "consent-tracking-api", version: "1.0" }], (error) => {
-          if (error) console.warn("MIRA FIVE: Shopify's consent API could not be loaded", error);
-          else if (!done && read()) stopLooking();
-        });
+      try {
+        const api = global();
+        if (api?.loadFeatures && !asked) {
+          asked = true;
+          api.loadFeatures([{ name: "consent-tracking-api", version: "1.0" }], (error) => {
+            if (error) warnOnce("Shopify's consent API could not be loaded", error);
+            // Also after the five seconds: on a slow connection the answer may come late.
+            else if (read()) stopLooking();
+          });
+        }
+      } catch (error) {
+        warnOnce("Shopify's consent API could not be asked", error);
       }
       if (Date.now() - started > WAIT_MS) stopLooking();
     }
@@ -112,6 +133,7 @@ export const shopify: ConsentAdapter = {
     timer = setInterval(look, POLL_MS);
     look();
     return () => {
+      stopped = true;
       stopLooking();
       host.document.removeEventListener("visitorConsentCollected", onDecision);
     };

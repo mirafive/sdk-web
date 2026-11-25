@@ -188,6 +188,8 @@ export function createMira<Events extends EventMap = EventMap>(
   let onAnonymousId: MiraOptions["onAnonymousId"];
   /** A `consent` call made before `init`: it wins over the option, as it did when replayed after. */
   let pendingConsent: "auto" | "shopify" | ConsentChoice | undefined;
+  /** `consent: 'shopify'` is the page's choice: the hook is wired when Shopify is there, even if late. */
+  let shopifyMode = false;
 
   const store = createStore(() => host.localStorage);
   const analytics = () => status.analytics === "granted";
@@ -313,6 +315,9 @@ export function createMira<Events extends EventMap = EventMap>(
    * downgrading within a session).
    */
   function applyConsent(next: ConsentStatus) {
+    // Shopify may appear after init (an async script that ran before Shopify's head scripts): the
+    // cookie and cart hook is wired before the first tier change that needs it.
+    if (shopifyMode) wireShopify();
     // Global Privacy Control is a legally binding opt-out of "selling or sharing" in several US
     // states (CCPA/CPRA and others). Marketing consent exists to share data with ad platforms, so
     // a GPC signal denies it. Analytics stays the CMP's decision: measuring one's own site is not
@@ -437,7 +442,8 @@ export function createMira<Events extends EventMap = EventMap>(
     pendingConsent = undefined;
     onAnonymousId = settings.onAnonymousId;
     // `consent: 'shopify'` on a storefront also shares the visitor's id with checkout.
-    if (choice === "shopify") wireShopify();
+    shopifyMode = choice === "shopify";
+    if (shopifyMode) wireShopify();
     adapters = settings.adapters ?? defaultAdapters;
     const origin = trimHost(settings.host ?? DEFAULT_HOST);
 
@@ -578,7 +584,8 @@ export function createMira<Events extends EventMap = EventMap>(
       }
       // The hook first: Shopify's answer is applied at once, and a "no" must reach it, to remove
       // what an earlier visit left.
-      if (choice === "shopify") wireShopify();
+      shopifyMode = choice === "shopify";
+      if (shopifyMode) wireShopify();
       followConsent(choice);
     }),
     setLocation: guard("setLocation", (next: LocationInput | null) => {

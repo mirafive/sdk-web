@@ -709,6 +709,117 @@ describe("storefront consent", () => {
     expect(seen).toEqual(["unknown"]);
   });
 
+  test("the look starts again at DOMContentLoaded", () => {
+    const fake = fakeHost();
+    const seen: string[] = [];
+    const stop = shopify.subscribe(fake.host, (status) => seen.push(status.analytics));
+    (fake.host as any).Shopify = { customerPrivacy: privacyOf(true, false) };
+    fake.host.document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(seen).toEqual(["unknown", "granted"]);
+    stop();
+  });
+
+  test("the look stops at the first answer, and a late loadFeatures callback is still heard", async () => {
+    const reads: number[] = [];
+    const fake = fakeHost();
+    let finish: ((error?: unknown) => void) | undefined;
+    (fake.host as any).Shopify = {
+      loadFeatures: (_features: unknown, done: (error?: unknown) => void) => {
+        finish = done;
+      },
+    };
+    const seen: string[] = [];
+    const now = spyOn(Date, "now");
+    const real = Date.now();
+    now.mockReturnValue(real);
+    const stop = shopify.subscribe(fake.host, (status) => seen.push(status.analytics));
+    // Five seconds pass without an answer: the look is over.
+    now.mockReturnValue(real + 6_000);
+    await tick(150);
+    // The API shows up now without a call back: nobody looks any more.
+    (fake.host as any).Shopify.customerPrivacy = {
+      ...privacyOf(true, true),
+      analyticsProcessingAllowed: () => {
+        reads.push(1);
+        return true;
+      },
+    };
+    await tick(250);
+    expect(reads).toEqual([]);
+    expect(seen).toEqual(["unknown"]);
+    // The late answer of loadFeatures is honoured, as it always was.
+    finish!();
+    expect(seen.at(-1)).toBe("granted");
+    now.mockRestore();
+    stop();
+  });
+
+  test("a loadFeatures that never calls back leaves the consent unknown and costs no more than the look", async () => {
+    const fake = fakeHost({ extra: { Shopify: { loadFeatures: () => {} } } });
+    const seen: string[] = [];
+    const now = spyOn(Date, "now");
+    const real = Date.now();
+    now.mockReturnValue(real);
+    const stop = shopify.subscribe(fake.host, (status) => seen.push(status.analytics));
+    now.mockReturnValue(real + 6_000);
+    await tick(250);
+    expect(seen).toEqual(["unknown"]);
+    now.mockRestore();
+    stop();
+  });
+
+  test("polling stops once the API has answered", async () => {
+    let reads = 0;
+    const fake = fakeHost();
+    const stop = shopify.subscribe(fake.host, () => {});
+    (fake.host as any).Shopify = {
+      customerPrivacy: {
+        ...privacyOf(true, false),
+        analyticsProcessingAllowed: () => {
+          reads += 1;
+          return true;
+        },
+      },
+    };
+    await tick(150);
+    const first = reads;
+    expect(first).toBeGreaterThan(0);
+    await tick(350);
+    expect(reads).toBe(first);
+    stop();
+  });
+
+  test("a customerPrivacy that throws is a warning, never an error from a timer", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const fake = fakeHost({
+      extra: {
+        Shopify: {
+          customerPrivacy: {
+            analyticsProcessingAllowed: () => {
+              throw new Error("broken");
+            },
+          },
+          loadFeatures: () => {
+            throw new Error("also broken");
+          },
+        },
+      },
+    });
+    const seen: string[] = [];
+    let stop = () => {};
+    expect(() => {
+      stop = shopify.subscribe(fake.host, (status) => seen.push(status.analytics));
+    }).not.toThrow();
+    await tick(350);
+    expect(seen).toEqual(["unknown"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    stop();
+    // Nothing stays registered: a decision afterwards does nothing.
+    fake.host.document.dispatchEvent(new CustomEvent("visitorConsentCollected"));
+    expect(seen).toEqual(["unknown"]);
+    warn.mockRestore();
+  });
+
   test("loads the Customer Privacy feature when the page has not", () => {
     const loaded: unknown[] = [];
     const fake = fakeHost({
@@ -817,16 +928,22 @@ function storefront(
     root?: string;
     consent?: "shopify" | { analytics: boolean };
     privacy?: ReturnType<typeof privacyOf>;
+    /** Shopify's scripts have not run when the page's script does: `window.Shopify` comes later. */
+    late?: boolean;
   } = {},
 ) {
   const fake = fakeHost({
     extra: {
-      Shopify: {
-        routes: { root: options.root ?? "/" },
-        ...(options.consent === "shopify"
-          ? { customerPrivacy: options.privacy ?? privacyOf(true, true) }
-          : {}),
-      },
+      ...(options.late
+        ? {}
+        : {
+            Shopify: {
+              routes: { root: options.root ?? "/" },
+              ...(options.consent === "shopify"
+                ? { customerPrivacy: options.privacy ?? privacyOf(true, true) }
+                : {}),
+            },
+          }),
       fetch: async (url: string, init: RequestInit) => {
         if (url.endsWith("cart/update.js")) {
           state.posts.push({
@@ -875,6 +992,27 @@ function storefront(
 }
 
 describe("storefront visitor id", () => {
+  test("Shopify that comes after the script still gets the cookie and the cart attribute", async () => {
+    const state = shop();
+    const { fake, mira } = storefront(state, { consent: "shopify", late: true });
+    await tick(30);
+    expect(mira.status.analytics).toBe("unknown");
+    expect(state.jar.has("mira_aid")).toBe(false);
+    // Shopify's head scripts run now, and the visitor's earlier "yes" is read from the API.
+    (fake.host as any).Shopify = { routes: { root: "/" }, customerPrivacy: privacyOf(true, true) };
+    await tick(250);
+    expect(mira.status.analytics).toBe("granted");
+    expect(state.jar.get("mira_aid")).toBe(mira.anonymousId!);
+    expect(state.posts).toHaveLength(1);
+    expect(state.posts[0]!.body).toEqual({ attributes: { [CART_ATTRIBUTE]: mira.anonymousId } });
+    // And a later "no" removes both, as on any storefront.
+    (fake.host as any).Shopify.customerPrivacy = privacyOf(false, false);
+    fake.host.document.dispatchEvent(new CustomEvent("visitorConsentCollected"));
+    await tick(10);
+    expect(state.jar.has("mira_aid")).toBe(false);
+    expect(state.posts.at(-1)!.body).toEqual({ attributes: { [CART_ATTRIBUTE]: "" } });
+  });
+
   test("goes to a cookie and the cart attribute, only with consent", async () => {
     const state = shop();
     const { fake, mira } = storefront(state);
