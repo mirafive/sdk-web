@@ -44,8 +44,8 @@ function fakePixel(
     pages: "all",
     analytics: {
       subscribe(name, handler) {
-        // Like Shopify: a name that is not a standard event is an error.
-        if (name === "visitorConsentCollected") throw new Error(`unknown event ${name}`);
+        // The pixel maps standard events only: it must not ask for more (all_events adds DOM events).
+        if (name !== "all_standard_events") throw new Error(`unexpected subscription ${name}`);
         handlers.set(name, [...(handlers.get(name) ?? []), handler]);
       },
     },
@@ -88,7 +88,6 @@ function fakePixel(
     for (const handler of [
       ...(handlers.get(event.name ?? "") ?? []),
       ...(handlers.get("all_standard_events") ?? []),
-      ...(handlers.get("all_events") ?? []),
     ])
       handler(event);
   };
@@ -478,7 +477,8 @@ describe("events waiting for the pixel", () => {
   test("the script keeps nothing when the pixel cannot start, and never throws", async () => {
     const fake = fakeHost();
     const pixel = fakePixel({ analytics: true });
-    const { key: _key, ...withoutKey } = pixel.input;
+    // The snippet path: no `analytics` in the input, and no key, so the pixel cannot start.
+    const { key: _key, analytics: _analytics, ...withoutKey } = pixel.input;
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     const stub: any = function (...args: unknown[]) {
       (stub.q ||= []).push(args);
@@ -493,6 +493,8 @@ describe("events waiting for the pixel", () => {
     expect(() => mira("shopifyEvent", { name: "checkout_completed" })).not.toThrow();
     expect(() => mira("track", "later")).not.toThrow();
     await tick(5);
+    // The queued event was dropped, and nothing later is sent either.
+    await mira("flush");
     expect(fake.events()).toEqual([]);
     warn.mockRestore();
     delete (globalThis as any).window;
@@ -534,6 +536,10 @@ describe("the time of an event", () => {
     expect(eventTime(1_700_000_000_000)).toBeUndefined();
     expect(eventTime(new Date(Date.now() + 3 * 86_400_000).toISOString())).toBeUndefined();
     expect(eventTime(new Date(Date.now() - 3 * 86_400_000).toISOString())).toBeUndefined();
+    // The window is an hour.
+    expect(eventTime(new Date(Date.now() - 2 * 3_600_000).toISOString())).toBeUndefined();
+    const halfAnHourAgo = new Date(Date.now() - 30 * 60_000);
+    expect(eventTime(halfAnHourAgo.toISOString())).toEqual(halfAnHourAgo);
     const fake = fakeHost();
     const pixel = fakePixel({ analytics: true });
     const mira = await startShopifyPixel(fake.host, pixel.input);

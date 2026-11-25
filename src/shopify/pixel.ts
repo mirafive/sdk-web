@@ -46,7 +46,7 @@ export interface PixelDocument {
 }
 export interface ShopifyEvent {
   name?: string;
-  /** When the event happened (ISO 8601), by Shopify's clock. */
+  /** When the event happened (ISO 8601), by the visitor's clock: the pixel runs in their browser. */
   timestamp?: string;
   context?: { document?: PixelDocument };
   data?: {
