@@ -15,7 +15,7 @@
   request was lost with the closing page (the tab keeps a record until a clear succeeded). Cart
   writes go through one queue, so the last wish wins.
 - Pixel mode for Shopify custom pixels, its own file `mira-shopify-pixel.js` (also
-  `startShopifyPixel`): `mira('shopifyPixel', { analytics, init, browser, customerPrivacy, key })`.
+  `startShopifyPixel`): `analytics.subscribe('all_standard_events', (event) => mira('shopifyEvent', event))` and `mira('shopifyPixel', { init, browser, customerPrivacy, key })`; an event gets the time Shopify gave it (within an hour of now).
   The page comes from each event's `context.document`, the visitor's id through `browser.cookie`,
   consent from `init.customerPrivacy` and `customerPrivacy.subscribe` (`api.customerPrivacy` in the
   pixel editor). Shopify's standard events are sent as `product_viewed`, `product_added_to_cart`,

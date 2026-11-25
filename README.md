@@ -274,8 +274,10 @@ window.mira =
   function () {
     (mira.q = mira.q || []).push(arguments);
   };
+analytics.subscribe("all_standard_events", (event) => {
+  mira("shopifyEvent", event);
+});
 mira("shopifyPixel", {
-  analytics,
   init,
   browser,
   customerPrivacy: typeof api !== "undefined" ? api.customerPrivacy : undefined,
@@ -287,7 +289,8 @@ script.src = "https://cdn.mirafive.io/sdk/v2/mira-shopify-pixel.js";
 document.head.appendChild(script);
 ```
 
-Pixel mode takes the page from each event's `context.document`, the visitor's id from the storefront
+The snippet subscribes to Shopify's events itself (Shopify's pixel editor warns about code without
+an `analytics.subscribe` call) and hands each one to the script. Pixel mode takes the page from each event's `context.document`, the visitor's id from the storefront
 cookie through `browser.cookie`, and consent from `init.customerPrivacy` and
 `customerPrivacy.subscribe('visitorConsentCollected', …)`. It sends `product_viewed`,
 `product_added_to_cart`, `checkout_started`, `payment_info_submitted` and `checkout_completed`
