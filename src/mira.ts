@@ -157,6 +157,8 @@ const MIN_ENGAGED_MS = 1_000;
 export function createMira<Events extends EventMap = EventMap>(
   options?: MiraOptions,
   host: Host = globalThis as unknown as Host,
+  /** The time an event gets. Pixel mode passes the time Shopify gave the event. */
+  now: () => Date = () => new Date(),
 ): Mira<Events> {
   let started = false;
   let debug = false;
@@ -239,7 +241,7 @@ export function createMira<Events extends EventMap = EventMap>(
       event_id: uuidv7(),
       type,
       event,
-      timestamp: new Date().toISOString(),
+      timestamp: now().toISOString(),
       properties: extra.properties ?? {},
       context: buildContext(host, at, consented ? { hints, location } : undefined),
       consent: { ...status },

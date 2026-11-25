@@ -6,7 +6,13 @@ import { validateEvent } from "@mirafive/protocol";
 import { fromCustomerPrivacy, shopify } from "../consent/shopify";
 import { createMira } from "../mira";
 import { fakeHost, tick } from "../test/fake-host";
-import { mapEvent, startShopifyPixel, type ShopifyEvent, type ShopifyPixelInput } from "./pixel";
+import {
+  eventTime,
+  mapEvent,
+  startShopifyPixel,
+  type ShopifyEvent,
+  type ShopifyPixelInput,
+} from "./pixel";
 import { CART_ATTRIBUTE, shopifyStorefront } from "./storefront";
 
 const KEY = "pk_test_123";
@@ -390,6 +396,98 @@ describe("pixel script", () => {
     const names = fake.events().map((event) => event.event);
     expect(names).toEqual(["queued_before_start", "after_start"]);
     delete (globalThis as any).window;
+  });
+});
+
+describe("pixel script: events through the snippet's own subscribe", () => {
+  test("mira('shopifyEvent', event) reports like analytics.subscribe, early and late", async () => {
+    const fake = fakeHost();
+    const pixel = fakePixel({ analytics: true });
+    // What the pasted snippet hands over: no `analytics` in the input.
+    const { analytics: _unused, ...input } = pixel.input;
+    const stub: any = function (...args: unknown[]) {
+      (stub.q ||= []).push(args);
+    };
+    // An event heard before the script loaded waits in the queue, in order.
+    stub("shopifyEvent", {
+      name: "checkout_started",
+      context: { document: PAGE },
+      data: { checkout },
+    });
+    stub("shopifyPixel", input);
+    Object.assign(fake.host, { mira: stub, window: fake.host });
+    Object.assign(globalThis, { window: fake.host });
+    await import(`./pixel-snippet?${Math.random()}`);
+    const mira = (fake.host as any).mira;
+    // An event heard while the pixel starts is not lost nor reordered.
+    mira("shopifyEvent", {
+      name: "payment_info_submitted",
+      context: { document: PAGE },
+      data: { checkout },
+    });
+    await tick(20);
+    mira("shopifyEvent", {
+      name: "checkout_completed",
+      context: { document: PAGE },
+      data: { checkout },
+    });
+    await tick(5);
+    await mira("flush");
+    const names = fake.events().map((event) => event.event);
+    expect(names.filter((name) => !name.startsWith("$"))).toEqual([
+      "checkout_started",
+      "payment_info_submitted",
+      "checkout_completed",
+    ]);
+    delete (globalThis as any).window;
+  });
+});
+
+describe("the time of an event", () => {
+  const checkoutEvent = (name: string, timestamp: string | undefined): ShopifyEvent => ({
+    name,
+    timestamp,
+    context: { document: PAGE },
+    data: { checkout },
+  });
+
+  test("Shopify's own time is the event's time, so a late arrival keeps its place", async () => {
+    const fake = fakeHost();
+    const pixel = fakePixel({ analytics: true });
+    const mira = await startShopifyPixel(fake.host, pixel.input);
+    await tick(10);
+    const done = new Date(Date.now() - 12_000).toISOString();
+    const paid = new Date(Date.now() - 24_000).toISOString();
+    // Heard in the wrong order: the payment step after the completed order.
+    pixel.emit(checkoutEvent("checkout_completed", done));
+    pixel.emit(checkoutEvent("payment_info_submitted", paid));
+    await tick(5);
+    await mira!.flush();
+    const events = fake.events();
+    const time = (name: string) => events.find((event) => event.event === name)?.timestamp;
+    expect(time("checkout_completed")).toBe(done);
+    expect(time("payment_info_submitted")).toBe(paid);
+    expect(Date.parse(time("payment_info_submitted")!)).toBeLessThan(
+      Date.parse(time("checkout_completed")!),
+    );
+  });
+
+  test("a missing, broken or far-off time is ignored", async () => {
+    expect(eventTime(undefined)).toBeUndefined();
+    expect(eventTime("yesterday")).toBeUndefined();
+    expect(eventTime(1_700_000_000_000)).toBeUndefined();
+    expect(eventTime(new Date(Date.now() + 3 * 86_400_000).toISOString())).toBeUndefined();
+    expect(eventTime(new Date(Date.now() - 3 * 86_400_000).toISOString())).toBeUndefined();
+    const fake = fakeHost();
+    const pixel = fakePixel({ analytics: true });
+    const mira = await startShopifyPixel(fake.host, pixel.input);
+    await tick(10);
+    const before = Date.now();
+    pixel.emit(checkoutEvent("checkout_started", "2001-01-01T00:00:00Z"));
+    await tick(5);
+    await mira!.flush();
+    const sent = fake.events().find((event) => event.event === "checkout_started");
+    expect(Date.parse(sent!.timestamp!)).toBeGreaterThanOrEqual(before - 1_000);
   });
 });
 

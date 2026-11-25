@@ -4,7 +4,8 @@
  *
  * ```js
  * window.mira = window.mira || function () { (mira.q = mira.q || []).push(arguments); };
- * mira("shopifyPixel", { analytics, init, browser, customerPrivacy: typeof api !== "undefined" ? api.customerPrivacy : undefined, key: "mira_pk_…" });
+ * analytics.subscribe("all_events", (event) => mira("shopifyEvent", event));
+ * mira("shopifyPixel", { init, browser, customerPrivacy: typeof api !== "undefined" ? api.customerPrivacy : undefined, key: "mira_pk_…" });
  * // …then a script element for /sdk/v2/mira-shopify-pixel.js
  * ```
  *
@@ -13,7 +14,7 @@
  */
 import type { Host } from "../consent/types";
 import type { Mira } from "../mira";
-import { startShopifyPixel, type ShopifyPixelInput } from "./pixel";
+import { startShopifyPixel, type ShopifyEvent, type ShopifyPixelInput } from "./pixel";
 
 type Stub = ((...args: unknown[]) => unknown) & { q?: ArrayLike<unknown>[]; loaded?: boolean };
 
@@ -30,8 +31,27 @@ async function boot() {
     return;
   }
 
+  // The snippet subscribes to Shopify's events itself and hands each one over as
+  // `mira("shopifyEvent", event)`. Until the pixel has subscribed, they wait here.
+  const listeners: ((event: ShopifyEvent) => void)[] = [];
+  const early: ShopifyEvent[] = [];
+  const hear = (event: ShopifyEvent) => {
+    if (listeners.length) for (const listener of listeners) listener(event);
+    else early.push(event);
+  };
+  input.analytics ??= {
+    subscribe(_name, handler) {
+      listeners.push(handler);
+      for (const event of early.splice(0)) handler(event);
+    },
+  };
+
   let instance: Mira | undefined;
   const run = (command: unknown, args: unknown[]) => {
+    if (command === "shopifyEvent") {
+      hear(args[0] as ShopifyEvent);
+      return undefined;
+    }
     const call = (instance as unknown as Record<string, unknown> | undefined)?.[String(command)];
     return typeof call === "function" ? call.apply(instance, args) : undefined;
   };
@@ -39,14 +59,15 @@ async function boot() {
   const waiting: [unknown, unknown[]][] = [];
   host.mira = Object.assign(
     (command: unknown, ...args: unknown[]) => {
-      if (instance) return run(command, args);
+      if (instance || command === "shopifyEvent") return run(command, args);
       waiting.push([command, args]);
       return undefined;
     },
     { loaded: true },
   );
   for (const [command, ...args] of queue.map((entry) => Array.from(entry))) {
-    if (command !== "shopifyPixel") waiting.push([command, args]);
+    if (command === "shopifyEvent") hear(args[0] as ShopifyEvent);
+    else if (command !== "shopifyPixel") waiting.push([command, args]);
   }
   instance = await startShopifyPixel(host, input);
   for (const [command, args] of waiting.splice(0)) run(command, args);

@@ -46,6 +46,8 @@ export interface PixelDocument {
 }
 export interface ShopifyEvent {
   name?: string;
+  /** When the event happened (ISO 8601), by Shopify's clock. */
+  timestamp?: string;
   context?: { document?: PixelDocument };
   data?: {
     productVariant?: Variant;
@@ -61,7 +63,12 @@ export interface PixelPrivacy {
 
 /** The three objects Shopify hands every custom pixel as globals, plus MIRA's settings. */
 export interface ShopifyPixelInput {
-  analytics: { subscribe(name: string, handler: (event: ShopifyEvent) => void): unknown };
+  /**
+   * Shopify's event bus. The pasted snippet subscribes itself (Shopify's pixel editor looks for
+   * that call in the code) and hands each event over with `mira("shopifyEvent", event)`, so this
+   * is left out there; the script then supplies its own.
+   */
+  analytics?: { subscribe(name: string, handler: (event: ShopifyEvent) => void): unknown };
   init: {
     context?: { document?: PixelDocument };
     customerPrivacy?: PixelPrivacy;
@@ -92,6 +99,20 @@ export interface ShopifyPixelInput {
 /** The events that become MIRA events, by their Shopify names, which the funnel templates know. */
 const STEPS = new Set(["checkout_started", "payment_info_submitted", "checkout_completed"]);
 const YEAR_S = 365 * 24 * 60 * 60;
+/** How far Shopify's event time may be from the clock here and still be believed. */
+const SANE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The time Shopify gave an event, when it is an ISO time within a day of now (a pixel's clock and
+ * the visitor's can differ, and the server bounds a claimed time again). Events are sent when the
+ * sandbox hears them, which is not always in the order they happened: `payment_info_submitted`
+ * can arrive after `checkout_completed`.
+ */
+export function eventTime(timestamp: unknown, now = Date.now()): Date | undefined {
+  if (typeof timestamp !== "string") return undefined;
+  const time = Date.parse(timestamp);
+  return Number.isFinite(time) && Math.abs(time - now) <= SANE_MS ? new Date(time) : undefined;
+}
 
 const clean = (properties: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
@@ -282,7 +303,7 @@ export async function startShopifyPixel(
     const { analytics, init, browser } = input ?? {};
     if (!analytics?.subscribe || !browser?.cookie || !input.key) {
       console.warn(
-        "MIRA FIVE: the pixel needs `analytics`, `init`, `browser` and the project's public key: mira('shopifyPixel', { analytics, init, browser, customerPrivacy, key }). Nothing is sent.",
+        "MIRA FIVE: the pixel needs `init`, `browser` and the project's public key: mira('shopifyPixel', { init, browser, customerPrivacy, key }), and its events through analytics.subscribe. Nothing is sent.",
       );
       return undefined;
     }
@@ -343,6 +364,8 @@ export async function startShopifyPixel(
     // The ingest needs a page URL on every event (Origin: null is accepted only with one), so an
     // event waits for a page that names its URL, and so does the identify.
     let identified = false;
+    // The time of the event being reported: set around the synchronous call that queues it.
+    let eventAt: Date | undefined;
     const report = (event: ShopifyEvent) => {
       try {
         note(event.context?.document);
@@ -352,6 +375,7 @@ export async function startShopifyPixel(
           identified = true;
           mira.identify(customer, {}, { externalIds: { shopify_customer: customer } });
         }
+        eventAt = eventTime(event.timestamp);
         if (event.name === "page_viewed") {
           if (input.pages === "all" || isCheckout(current.href)) mira.page();
           return;
@@ -360,6 +384,8 @@ export async function startShopifyPixel(
         if (mapped) mira.track(mapped.name, mapped.properties as Record<string, unknown>);
       } catch (error) {
         warn("an event could not be reported", error);
+      } finally {
+        eventAt = undefined;
       }
     };
     analytics.subscribe("all_events", (event) => {
@@ -376,7 +402,7 @@ export async function startShopifyPixel(
       autocapture: false,
       debug,
     };
-    mira = createMira(options, host);
+    mira = createMira(options, host, () => eventAt ?? new Date());
     // Events that only the start's own document describes (no event yet) are reported at once.
     report({});
 
