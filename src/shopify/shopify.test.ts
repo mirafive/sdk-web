@@ -6,6 +6,7 @@ import { validateEvent } from "@mirafive/protocol";
 import { fromCustomerPrivacy, shopify } from "../consent/shopify";
 import { createMira } from "../mira";
 import { fakeHost, tick } from "../test/fake-host";
+import { eventFeed } from "./event-feed";
 import {
   eventTime,
   mapEvent,
@@ -86,6 +87,7 @@ function fakePixel(
     }
     for (const handler of [
       ...(handlers.get(event.name ?? "") ?? []),
+      ...(handlers.get("all_standard_events") ?? []),
       ...(handlers.get("all_events") ?? []),
     ])
       handler(event);
@@ -439,6 +441,60 @@ describe("pixel script: events through the snippet's own subscribe", () => {
       "payment_info_submitted",
       "checkout_completed",
     ]);
+    delete (globalThis as any).window;
+  });
+});
+
+describe("events waiting for the pixel", () => {
+  const event = (name: string): ShopifyEvent => ({ name });
+
+  test("they wait in order for the pixel's subscription, then flow", () => {
+    const feed = eventFeed(false);
+    feed.hear(event("a"));
+    feed.hear(event("b"));
+    expect(feed.waiting).toBe(2);
+    const heard: string[] = [];
+    feed.subscribe((item) => heard.push(item.name!));
+    feed.hear(event("c"));
+    expect(heard).toEqual(["a", "b", "c"]);
+    expect(feed.waiting).toBe(0);
+  });
+
+  test("a pixel that hears Shopify itself keeps nothing, however many events a snippet adds", () => {
+    const feed = eventFeed(true);
+    for (let index = 0; index < 1_000; index += 1) feed.hear(event("a"));
+    expect(feed.waiting).toBe(0);
+  });
+
+  test("after a failed start nothing is kept", () => {
+    const feed = eventFeed(false);
+    feed.hear(event("a"));
+    feed.stop();
+    expect(feed.waiting).toBe(0);
+    feed.hear(event("b"));
+    expect(feed.waiting).toBe(0);
+  });
+
+  test("the script keeps nothing when the pixel cannot start, and never throws", async () => {
+    const fake = fakeHost();
+    const pixel = fakePixel({ analytics: true });
+    const { key: _key, ...withoutKey } = pixel.input;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const stub: any = function (...args: unknown[]) {
+      (stub.q ||= []).push(args);
+    };
+    stub("shopifyEvent", { name: "checkout_started", context: { document: PAGE } });
+    stub("shopifyPixel", withoutKey);
+    Object.assign(fake.host, { mira: stub, window: fake.host });
+    Object.assign(globalThis, { window: fake.host });
+    await import(`./pixel-snippet?${Math.random()}`);
+    await tick(20);
+    const mira = (fake.host as any).mira;
+    expect(() => mira("shopifyEvent", { name: "checkout_completed" })).not.toThrow();
+    expect(() => mira("track", "later")).not.toThrow();
+    await tick(5);
+    expect(fake.events()).toEqual([]);
+    warn.mockRestore();
     delete (globalThis as any).window;
   });
 });

@@ -99,12 +99,18 @@ export interface ShopifyPixelInput {
 /** The events that become MIRA events, by their Shopify names, which the funnel templates know. */
 const STEPS = new Set(["checkout_started", "payment_info_submitted", "checkout_completed"]);
 const YEAR_S = 365 * 24 * 60 * 60;
-/** How far Shopify's event time may be from the clock here and still be believed. */
-const SANE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How far Shopify's event time may be from the clock here and still be believed. Real gaps are
+ * seconds: the pixel hears an event as it happens.
+ */
+const SANE_MS = 60 * 60 * 1000;
 
 /**
- * The time Shopify gave an event, when it is an ISO time within a day of now (a pixel's clock and
- * the visitor's can differ, and the server bounds a claimed time again). Events are sent when the
+ * The time Shopify gave an event, when it is an ISO time within an hour of now. Shopify's docs
+ * (web pixels API, standard events) call it "the timestamp of when the customer event occurred, in
+ * ISO 8601 format" and do not say whose clock it is. The pixel runs in the visitor's browser, so
+ * it is the visitor's clock like the SDK's own times: the transport's `sent_at` lets the server
+ * correct either one, and the server bounds a claimed time again. Events are sent when the
  * sandbox hears them, which is not always in the order they happened: `payment_info_submitted`
  * can arrive after `checkout_completed`.
  */
@@ -388,7 +394,7 @@ export async function startShopifyPixel(
         eventAt = undefined;
       }
     };
-    analytics.subscribe("all_events", (event) => {
+    analytics.subscribe("all_standard_events", (event) => {
       if (mira) report(event);
       else waiting.push(event);
     });
