@@ -621,6 +621,94 @@ describe("storefront consent", () => {
     expect(seen).toHaveLength(count);
   });
 
+  test("Shopify that appears only after init is followed (customerPrivacy defined later)", async () => {
+    const fake = fakeHost();
+    const seen: string[] = [];
+    const stop = shopify.subscribe(fake.host, (status) =>
+      seen.push(`${status.analytics}/${status.marketing}`),
+    );
+    expect(seen).toEqual(["unknown/unknown"]);
+    // Shopify's own head scripts run after this one.
+    (fake.host as any).Shopify = { customerPrivacy: privacyOf(true, false) };
+    await tick(250);
+    expect(seen.at(-1)).toBe("granted/denied");
+    stop();
+  });
+
+  test("Shopify that appears with only loadFeatures is asked once, and its answer read", async () => {
+    const fake = fakeHost();
+    const mira = createMira({ key: KEY, host: HOST, consent: "shopify" }, fake.host);
+    await tick(30);
+    expect(mira.status.analytics).toBe("unknown");
+    const asked: unknown[] = [];
+    const shop: any = {
+      loadFeatures(features: unknown, done: (error?: unknown) => void) {
+        asked.push(features);
+        shop.customerPrivacy = privacyOf(true, true);
+        done();
+      },
+    };
+    (fake.host as any).Shopify = shop;
+    await tick(250);
+    expect(asked).toEqual([[{ name: "consent-tracking-api", version: "1.0" }]]);
+    expect(mira.status).toEqual({ analytics: "granted", marketing: "granted" });
+  });
+
+  test("a decision heard before the API is there is not lost", async () => {
+    const fake = fakeHost();
+    const seen: string[] = [];
+    const stop = shopify.subscribe(fake.host, (status) =>
+      seen.push(`${status.analytics}/${status.marketing}`),
+    );
+    // The visitor answers (Shopify's banner loaded the API for itself) before this script saw it.
+    fake.host.document.dispatchEvent(new CustomEvent("visitorConsentCollected"));
+    expect(seen).toEqual(["unknown/unknown"]);
+    (fake.host as any).Shopify = { customerPrivacy: privacyOf(false, false) };
+    await tick(250);
+    expect(seen.at(-1)).toBe("denied/denied");
+    // And a later decision is heard as before.
+    (fake.host as any).Shopify.customerPrivacy = privacyOf(true, false);
+    fake.host.document.dispatchEvent(new CustomEvent("visitorConsentCollected"));
+    expect(seen.at(-1)).toBe("granted/denied");
+    stop();
+  });
+
+  test("a loadFeatures error is logged and the look goes on until customerPrivacy shows", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const fake = fakeHost({
+      extra: {
+        Shopify: {
+          loadFeatures: (_features: unknown, done: (error?: unknown) => void) =>
+            done(new Error("offline")),
+        },
+      },
+    });
+    const seen: string[] = [];
+    const stop = shopify.subscribe(fake.host, (status) =>
+      seen.push(`${status.analytics}/${status.marketing}`),
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(["unknown/unknown"]);
+    // The theme loads the feature after all.
+    (fake.host as any).Shopify.customerPrivacy = privacyOf(true, false);
+    await tick(250);
+    expect(seen.at(-1)).toBe("granted/denied");
+    // Asked once, however long it looks.
+    expect(warn).toHaveBeenCalledTimes(1);
+    stop();
+    warn.mockRestore();
+  });
+
+  test("nothing is stored and nothing looked at after stop", async () => {
+    const fake = fakeHost();
+    const seen: string[] = [];
+    const stop = shopify.subscribe(fake.host, (status) => seen.push(status.analytics));
+    stop();
+    (fake.host as any).Shopify = { customerPrivacy: privacyOf(true, true) };
+    await tick(250);
+    expect(seen).toEqual(["unknown"]);
+  });
+
   test("loads the Customer Privacy feature when the page has not", () => {
     const loaded: unknown[] = [];
     const fake = fakeHost({

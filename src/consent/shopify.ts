@@ -54,29 +54,67 @@ interface ShopifyGlobal {
   ) => void;
 }
 
+/** How often, and for how long, a storefront without the API yet is looked at again. */
+const POLL_MS = 100;
+const WAIT_MS = 5_000;
+
 export const shopify: ConsentAdapter = {
   name: "shopify",
   detect: (host) => {
     const global = host.Shopify as ShopifyGlobal | undefined;
     return Boolean(global?.customerPrivacy || global?.loadFeatures);
   },
+  /**
+   * Follows the API without deciding once whether it is there: an async script that runs before
+   * Shopify's own head scripts has no `Shopify.customerPrivacy` or `Shopify.loadFeatures` yet.
+   * Until the answer is known the consent stays `unknown` (nothing is stored). The `document`
+   * listener is added at once; the API itself is looked for again at `DOMContentLoaded` and every
+   * 100 ms for five seconds, asked for with `loadFeatures` when only that exists (an error is
+   * logged and the look goes on: the theme may still load it).
+   */
   subscribe(host, emit) {
+    const global = () => host.Shopify as ShopifyGlobal | undefined;
+    let done = false;
+    let asked = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stopLooking = () => {
+      done = true;
+      clearInterval(timer);
+      host.document.removeEventListener("DOMContentLoaded", look);
+    };
+    /** Emits what the API says, once it is there. */
     const read = () => {
-      const privacy = (host.Shopify as ShopifyGlobal | undefined)?.customerPrivacy;
+      const privacy = global()?.customerPrivacy;
       if (privacy) emit(fromCustomerPrivacy(privacy));
+      return Boolean(privacy);
+    };
+    const started = Date.now();
+    function look() {
+      if (done) return;
+      if (read()) return stopLooking();
+      const api = global();
+      if (api?.loadFeatures && !asked) {
+        asked = true;
+        api.loadFeatures([{ name: "consent-tracking-api", version: "1.0" }], (error) => {
+          if (error) console.warn("MIRA FIVE: Shopify's consent API could not be loaded", error);
+          else if (!done && read()) stopLooking();
+        });
+      }
+      if (Date.now() - started > WAIT_MS) stopLooking();
+    }
+    // A decision (heard on the document, which it does not bubble from) also ends the look.
+    const onDecision = () => {
+      if (read()) stopLooking();
     };
     emit({ analytics: "unknown", marketing: "unknown" });
-    const global = host.Shopify as ShopifyGlobal;
-    if (global.customerPrivacy) read();
-    else {
-      global.loadFeatures?.([{ name: "consent-tracking-api", version: "1.0" }], (error) => {
-        if (error) console.warn("MIRA FIVE: Shopify's consent API could not be loaded", error);
-        else read();
-      });
-    }
-    // Shopify dispatches on the document and does not bubble.
-    host.document.addEventListener("visitorConsentCollected", read);
-    return () => host.document.removeEventListener("visitorConsentCollected", read);
+    host.document.addEventListener("visitorConsentCollected", onDecision);
+    host.document.addEventListener("DOMContentLoaded", look);
+    timer = setInterval(look, POLL_MS);
+    look();
+    return () => {
+      stopLooking();
+      host.document.removeEventListener("visitorConsentCollected", onDecision);
+    };
   },
 };
 
@@ -113,7 +151,7 @@ export function followShopify(
       if (!answered) emit({ analytics: "unknown", marketing: "unknown" });
     },
   );
-  if (!bannerFound && shopify.detect(host)) {
+  if (!bannerFound) {
     stopShopify = shopify.subscribe(host, (status) => {
       if (bannerFound) return;
       if (status.analytics !== "unknown") answered = true;
