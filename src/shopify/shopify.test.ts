@@ -930,10 +930,13 @@ function storefront(
     privacy?: ReturnType<typeof privacyOf>;
     /** Shopify's scripts have not run when the page's script does: `window.Shopify` comes later. */
     late?: boolean;
+    /** Other globals on the page, such as a consent banner's. */
+    extra?: Record<string, unknown>;
   } = {},
 ) {
   const fake = fakeHost({
     extra: {
+      ...options.extra,
       ...(options.late
         ? {}
         : {
@@ -992,6 +995,60 @@ function storefront(
 }
 
 describe("storefront visitor id", () => {
+  test("a banner's stored yes before Shopify appears: the hook is wired when the page has loaded", async () => {
+    const state = shop();
+    const cookiebot = { hasResponse: true, consent: { statistics: true, marketing: false } };
+    const { fake, mira } = storefront(state, {
+      consent: "shopify",
+      late: true,
+      extra: { Cookiebot: cookiebot },
+    });
+    await tick(30);
+    // The banner decided at once; Shopify's scripts have not run, so nothing can be written yet.
+    expect(mira.status.analytics).toBe("granted");
+    expect(state.jar.has("mira_aid")).toBe(false);
+    (fake.host as any).Shopify = { routes: { root: "/" } };
+    fake.host.document.dispatchEvent(new Event("DOMContentLoaded"));
+    await tick(10);
+    expect(state.jar.get("mira_aid")).toBe(mira.anonymousId!);
+    expect(state.posts).toHaveLength(1);
+    expect(state.posts[0]!.body).toEqual({ attributes: { [CART_ATTRIBUTE]: mira.anonymousId } });
+    // One-shot: the load event does not write again.
+    fake.host.dispatchEvent(new Event("load"));
+    await tick(10);
+    expect(state.posts).toHaveLength(1);
+  });
+
+  test('wiring on the way to a "no" does not write the id first', async () => {
+    const state = shop();
+    const cookiebot = { hasResponse: true, consent: { statistics: true, marketing: false } };
+    const { fake, mira } = storefront(state, {
+      consent: "shopify",
+      late: true,
+      extra: { Cookiebot: cookiebot },
+    });
+    await tick(30);
+    expect(mira.status.analytics).toBe("granted");
+    // Every write of the cookie jar is recorded from here on.
+    const written: string[] = [];
+    const set = state.jar.set.bind(state.jar);
+    state.jar.set = (key, value) => {
+      written.push(key);
+      return set(key, value);
+    };
+    // Shopify has arrived, and the visitor withdraws before the page's load event.
+    (fake.host as any).Shopify = { routes: { root: "/" } };
+    cookiebot.consent.statistics = false;
+    fake.host.dispatchEvent(new Event("CookiebotOnDecline"));
+    await tick(10);
+    expect(mira.status.analytics).toBe("denied");
+    expect(state.jar.has("mira_aid")).toBe(false);
+    // The id was never written, not even for a moment.
+    expect(written).not.toContain("mira_aid");
+    // Only the clean-up went out: never the id itself.
+    expect(state.posts.every((post) => post.body.attributes[CART_ATTRIBUTE] === "")).toBe(true);
+  });
+
   test("Shopify that comes after the script still gets the cookie and the cart attribute", async () => {
     const state = shop();
     const { fake, mira } = storefront(state, { consent: "shopify", late: true });

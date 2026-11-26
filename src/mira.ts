@@ -317,7 +317,7 @@ export function createMira<Events extends EventMap = EventMap>(
   function applyConsent(next: ConsentStatus) {
     // Shopify may appear after init (an async script that ran before Shopify's head scripts): the
     // cookie and cart hook is wired before the first tier change that needs it.
-    if (shopifyMode) wireShopify();
+    if (shopifyMode) wireShopify(next);
     // Global Privacy Control is a legally binding opt-out of "selling or sharing" in several US
     // states (CCPA/CPRA and others). Marketing consent exists to share data with ad platforms, so
     // a GPC signal denies it. Analytics stays the CMP's decision: measuring one's own site is not
@@ -400,11 +400,33 @@ export function createMira<Events extends EventMap = EventMap>(
   }
 
   /** The cookie and cart hook of Shopify mode, unless the page brought its own. */
-  function wireShopify() {
+  function wireShopify(next?: ConsentStatus) {
     if (onAnonymousId || !host.Shopify) return;
     onAnonymousId = shopifyStorefront(host, warn);
-    // Consent may be given already: tell the hook about the id it has not heard of.
-    if (analytics()) announceId();
+    // Consent may be given already (a banner's stored "yes"): tell the hook about the id it has not
+    // heard of. Not when the change in hand is a "no": the clean-up that follows is all it needs.
+    if (analytics() && (next ? next.analytics === "granted" : true)) announceId();
+  }
+
+  /** Looks again when the page has loaded, for a page whose Shopify scripts run after this one. */
+  let stopWiring: (() => void) | undefined;
+  function wireWhenShopifyComes() {
+    stopWiring?.();
+    stopWiring = undefined;
+    if (!shopifyMode) return;
+    wireShopify();
+    if (onAnonymousId) return;
+    const retry = () => {
+      wireShopify();
+      if (onAnonymousId) stopWiring?.();
+    };
+    stopWiring = () => {
+      host.document.removeEventListener("DOMContentLoaded", retry);
+      host.removeEventListener("load", retry);
+      stopWiring = undefined;
+    };
+    host.document.addEventListener("DOMContentLoaded", retry);
+    host.addEventListener("load", retry);
   }
 
   function announceId() {
@@ -443,7 +465,7 @@ export function createMira<Events extends EventMap = EventMap>(
     onAnonymousId = settings.onAnonymousId;
     // `consent: 'shopify'` on a storefront also shares the visitor's id with checkout.
     shopifyMode = choice === "shopify";
-    if (shopifyMode) wireShopify();
+    wireWhenShopifyComes();
     adapters = settings.adapters ?? defaultAdapters;
     const origin = trimHost(settings.host ?? DEFAULT_HOST);
 
@@ -585,7 +607,7 @@ export function createMira<Events extends EventMap = EventMap>(
       // The hook first: Shopify's answer is applied at once, and a "no" must reach it, to remove
       // what an earlier visit left.
       shopifyMode = choice === "shopify";
-      if (shopifyMode) wireShopify();
+      wireWhenShopifyComes();
       followConsent(choice);
     }),
     setLocation: guard("setLocation", (next: LocationInput | null) => {

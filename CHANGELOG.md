@@ -17,8 +17,9 @@
 - The script does not decide once whether Shopify's API is there. One that runs before Shopify's
   head scripts looks again at `DOMContentLoaded` and every 100 ms for five seconds, asks with
   `loadFeatures` when that is all there is (an error is logged once and the look goes on; an answer
-  that comes later is still heard), and wires the cookie and cart attribute when Shopify first
-  appears. Until the API answers, consent stays unknown and nothing is stored. A decision made
+  that comes later is still heard), and wires the cookie and cart attribute as soon as Shopify is
+  there: at the first consent change, or at the page's `DOMContentLoaded` or `load` when a banner of
+  another kind decided before Shopify's scripts ran. Wiring on the way to a "no" writes no id. Until the API answers, consent stays unknown and nothing is stored. A decision made
   before the script looked is read from the API's current state; after the five seconds only a new
   decision (or a late `loadFeatures` answer) is heard. A broken API is a warning, never an error.
 - Pixel mode for Shopify custom pixels, its own file `mira-shopify-pixel.js` (also
@@ -33,7 +34,7 @@
 
 ### Changed
 
-- The script tag grew from 8.4 to 9.8 kB gzip; the pixel file is 11.4 kB (its own build budget is 12 kB) (the Shopify adapter and the cart hook).
+- The script tag grew from 8.4 to 9.9 kB gzip; the pixel file is 11.5 kB (its own build budget is 12 kB) (the Shopify adapter and the cart hook).
 - `consent` also accepts `'shopify'`. A `consent` call made before `init` (also one queued before
   the script loaded) is now `init`'s own choice, not a call after it, so a CMP's or Consent Mode's
   grant cannot come first.
