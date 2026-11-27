@@ -43,8 +43,8 @@ export interface ReplayControl {
 
 /** The recorder file's side: the whole of recording for one page. */
 export interface ReplaySession extends ReplayControl {
-  /** The recorded session this page knows of, for the withdrawal. */
-  readonly session: string | undefined;
+  /** Every session this page knew to be recorded, for the withdrawal. */
+  readonly sessions: readonly string[];
 }
 
 export type CreateReplay = (environment: ReplayEnvironment) => ReplaySession;
@@ -76,6 +76,14 @@ export const replayControl =
           if (last !== undefined) full.answer(last);
         })
         .catch((error: unknown) => environment.warn("the recorder could not be loaded", error)));
+
+    const forget = () => {
+      try {
+        host.sessionStorage.removeItem(REPLAY_KEY);
+      } catch {
+        // Nothing to remove.
+      }
+    };
 
     const withdraw = (id: string, again = true) => {
       const url = `${environment.ingest}/v1/replay/withdraw?key=${encodeURIComponent(environment.key)}&session=${encodeURIComponent(id)}`;
@@ -115,18 +123,22 @@ export const replayControl =
         }
         // Withdrawn: the recorder stops and drops its buffer; the tab's record goes; the server
         // deletes what it stored.
-        const id = full?.session ?? session;
+        const ids = new Set(full?.sessions);
+        if (session) ids.add(session);
         full?.consent(false);
         session = undefined;
         last = undefined;
-        try {
-          host.sessionStorage.removeItem(REPLAY_KEY);
-        } catch {
-          // Nothing to remove.
-        }
-        if (id) withdraw(id);
+        forget();
+        for (const id of ids) withdraw(id);
       },
-      reset: () => full?.reset(),
+      reset() {
+        if (!granted) return;
+        if (full) return full.reset();
+        // Not loaded yet: the session ends here all the same.
+        session = undefined;
+        last = undefined;
+        forget();
+      },
       hide: () => full?.hide(),
     };
   };

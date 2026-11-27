@@ -51,6 +51,27 @@ describe("attributes", () => {
   });
 });
 
+describe("web addresses", () => {
+  test("a link or a form's action loses its query and fragment, which can carry tokens", () => {
+    expect(cleanAttribute("href", "https://shop.example/reset?token=abc123#x")).toBe(
+      "https://shop.example/reset",
+    );
+    expect(cleanAttribute("action", "https://shop.example/login?next=/account")).toBe(
+      "https://shop.example/login",
+    );
+    expect(cleanAttribute("href", "#reviews")).toBe("#reviews");
+  });
+
+  test("so does the page's address in a meta event", () => {
+    const event: RecordedEvent = {
+      type: 4,
+      timestamp: 1,
+      data: { href: "https://shop.example/account/reset?token=abc123", width: 1, height: 1 },
+    };
+    expect(sanitize(event, none).data.href).toBe("https://shop.example/account/reset");
+  });
+});
+
 describe("events", () => {
   test("the full snapshot, all the way down", () => {
     const deep = element("span", { title: "jana@example.com" }, [], 3);

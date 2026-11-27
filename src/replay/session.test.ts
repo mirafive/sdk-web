@@ -202,20 +202,56 @@ describe("consent", () => {
     const { session, log, stored } = setup();
     session.consent(true);
     session.answer(body(answerOf(A)));
-    expect(session.session).toBe(A);
+    expect(session.sessions).toEqual([A]);
     session.consent(false);
     expect(log).toEqual(["9abc#1 stop drop"]);
     expect(stored()).toBeUndefined();
-    expect(session.session).toBeUndefined();
   });
 
-  test("reset and page hide reach the recorder", () => {
+  test("withdrawn: a recorder still sending for an earlier session drops it too, and both are named", () => {
     const { session, log } = setup();
     session.consent(true);
     session.answer(body(answerOf(A)));
-    session.reset();
+    session.answer(body(answerOf(B)));
+    session.consent(false);
+    expect(log).toEqual(["9abc#1 stop keep", "4321#2 stop drop", "9abc#1 stop drop"]);
+    expect(session.sessions).toEqual([A, B]);
+  });
+
+  test("page hide reaches the recorder", () => {
+    const { session, log } = setup();
+    session.consent(true);
+    session.answer(body(answerOf(A)));
     session.hide();
-    expect(log).toEqual(["9abc#1 cut", "9abc#1 hide"]);
+    expect(log).toEqual(["9abc#1 hide"]);
+  });
+});
+
+describe("reset (logout)", () => {
+  test("what was recorded leaves, the session ends, the tab's record goes", () => {
+    const { session, log, started, stored } = setup();
+    session.consent(true);
+    session.answer(body(answerOf(A)));
+    session.reset();
+    expect(log).toEqual(["9abc#1 stop keep"]);
+    expect(stored()).toBeUndefined();
+    // The old session never starts again on this page; a new decision does.
+    session.answer(body(answerOf(A)));
+    expect(started).toHaveLength(1);
+    session.answer(body(answerOf(B)));
+    expect(started).toHaveLength(2);
+  });
+});
+
+describe("numbering", () => {
+  test("a session that is stopped and named again goes on with its numbers", () => {
+    const { session, started } = setup();
+    session.consent(true);
+    session.answer(body(answerOf(A)));
+    expect([started[0]!.nextSeq(), started[0]!.nextSeq()]).toEqual([0, 1]);
+    session.answer(body());
+    session.answer(body(answerOf(A)));
+    expect(started[1]!.nextSeq()).toBe(2);
   });
 });
 

@@ -6,6 +6,9 @@
  */
 import { redact } from "./masking";
 
+/** Masked text keeps its shape, never its characters. */
+const shape = (text: string) => text.replace(/\S/g, "*");
+
 /** The plugin's name in the recording (`data.plugin` of its events). */
 export const CAPTURE_PLUGIN = "mira/problems@1";
 
@@ -52,12 +55,15 @@ export function watchProblems(
   win: Window,
   report: (problem: Problem) => void,
   ignore: (url: string) => boolean,
+  /** Whether the page's text is masked now (strict mode, a sensitive page): messages are too. */
+  masked: () => boolean = () => false,
 ): () => void {
   let count = 0;
   const emit = (problem: Problem) => {
     if (count >= MAX_PROBLEMS) return;
     count += 1;
     try {
+      if (problem.kind !== "request" && masked()) problem.message = shape(problem.message);
       report(problem);
     } catch {
       // Never in the page's way.

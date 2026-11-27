@@ -124,6 +124,20 @@ describe("watching", () => {
     expect(win.console.error).toBe(original);
   });
 
+  test("on a page whose text is masked, messages are masked too", () => {
+    const { win } = fakeWindow(() => Promise.resolve(new Response("")));
+    const problems: Problem[] = [];
+    const stop = watchProblems(
+      win,
+      (problem) => problems.push(problem),
+      () => false,
+      () => true,
+    );
+    win.console.error("Order for Jana Doe failed");
+    expect(problems).toEqual([{ kind: "console", message: "***** *** **** *** ******" }]);
+    stop();
+  });
+
   test("a reporter that throws never reaches the page", () => {
     const { win } = fakeWindow(() => Promise.resolve(new Response("")));
     const stop = watchProblems(

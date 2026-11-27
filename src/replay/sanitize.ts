@@ -57,11 +57,28 @@ function extensionSheet(sheet: CSSStyleSheet | null | undefined, depth = 0): boo
   return false;
 }
 
+/**
+ * A web address without its query or fragment, which can carry tokens and what a person typed
+ * (`?email=…`, a reset link). Anything else (a fragment link, a relative path) stays as it is.
+ */
+export function withoutQuery(value: string): string {
+  if (!/^https?:/i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return value;
+  }
+}
+
 /** One attribute's value after the guard. */
 export function cleanAttribute(name: string, value: unknown): unknown {
-  if (typeof value !== "string" || !value || !isText(name)) return value;
+  if (typeof value !== "string" || !value) return value;
+  if (name === "action") return redact(withoutQuery(value));
+  if (!isText(name)) return value;
   // A mail or phone link is an address and nothing else.
   if (name === "href" && /^\s*(mailto|tel|sms):/i.test(value)) return value.replace(/:.*$/s, ":");
+  if (name === "href") return redact(withoutQuery(value));
   return redact(value);
 }
 
@@ -96,8 +113,9 @@ function cleanTree(node: SerializedNode | undefined, nodeOf: NodeOf): void {
 export function sanitize<T extends RecordedEvent>(event: T, nodeOf: NodeOf): T {
   const { data } = event;
   if (!data) return event;
-  if (event.type === EVENT.meta && typeof data.href === "string") data.href = redact(data.href);
-  else if (event.type === EVENT.fullSnapshot) cleanTree(data.node, nodeOf);
+  if (event.type === EVENT.meta && typeof data.href === "string") {
+    data.href = redact(withoutQuery(data.href));
+  } else if (event.type === EVENT.fullSnapshot) cleanTree(data.node, nodeOf);
   else if (event.type === EVENT.incremental && data.source === MUTATION) {
     for (const add of data.adds ?? []) cleanTree(add.node, nodeOf);
     for (const change of data.attributes ?? []) {

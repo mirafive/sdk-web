@@ -9,7 +9,7 @@ import type { CreateReplay } from "./control";
 import { CAPTURE_PLUGIN, watchProblems, type Problem } from "./capture";
 import { createChunker } from "./chunker";
 import { canCompress, compress } from "./gzip";
-import { neverRecorded, recordOptions, type Masking } from "./masking";
+import { masksAllText, neverRecorded, recordOptions, type Masking } from "./masking";
 import { sanitize, type NodeOf, type RecordedEvent } from "./sanitize";
 import {
   replaySession,
@@ -164,7 +164,12 @@ export function createRecorder(
           {
             name: CAPTURE_PLUGIN,
             observer: (report: (problem: Problem) => void, win: typeof globalThis) =>
-              watchProblems(win, report, (url) => url.startsWith(context.ingest)),
+              watchProblems(
+                win,
+                report,
+                (url) => url.startsWith(context.ingest),
+                () => masksAllText(answer, host.location.pathname),
+              ),
             options: {},
           },
         ],

@@ -88,8 +88,17 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
   let recorder: RecorderHandle | undefined;
   /** A refusal for the page, or a browser that cannot record: nothing more on this page. */
   let pageStopped = false;
-  /** Sessions the server refused (`409`): their later answers start nothing on this page. */
-  const refused = new Set<string>();
+  /**
+   * Sessions that end here: refused by the server (`409`), or left by `reset()`. Their later
+   * answers start nothing on this page.
+   */
+  const ended = new Set<string>();
+  /** The next chunk number of each session this page recorded, so a session never reuses one. */
+  const numbers = new Map<string, number>();
+  /** Recorders of earlier sessions still sending what they had: dropped if consent goes. */
+  const closing: RecorderHandle[] = [];
+  /** Every session this page knew to be recorded, for the withdrawal. */
+  const seen = new Set<string>();
   let waiting: (() => void) | undefined;
 
   // `sessionStorage` can throw (sandboxed frames, storage blocked); recording then just stays off.
@@ -104,17 +113,26 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
     storage((store) =>
       entry ? store.setItem(REPLAY_KEY, JSON.stringify(entry)) : store.removeItem(REPLAY_KEY),
     );
+  const take = (next: ReplayEntry | undefined) => {
+    entry = next;
+    if (next) seen.add(next.answer.session_id);
+    save();
+  };
 
+  /** Stops the running recorder: `keep` lets it send what it has (and keeps it until it is done). */
   const stop = (keep: boolean) => {
     waiting?.();
     waiting = undefined;
-    recorder?.stop(keep);
+    if (!recorder) return;
+    recorder.stop(keep);
+    if (keep) closing.push(recorder);
     recorder = undefined;
   };
 
   const begin = () => {
     if (!granted || !entry || recorder || waiting || pageStopped) return;
     const own = entry;
+    const id = own.answer.session_id;
     waiting = whenShown(host.document, () => {
       waiting = undefined;
       if (!granted || entry !== own || recorder) return;
@@ -124,6 +142,7 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
         nextSeq: () => {
           const seq = own.seq;
           own.seq += 1;
+          numbers.set(id, own.seq);
           if (entry === own) save();
           return seq;
         },
@@ -134,9 +153,8 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
             pageStopped = true;
             return;
           }
-          refused.add(own.answer.session_id);
-          entry = undefined;
-          save();
+          ended.add(id);
+          take(undefined);
         },
       });
       if (!recorder) pageStopped = true;
@@ -144,8 +162,8 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
   };
 
   return {
-    get session() {
-      return entry?.answer.session_id;
+    get sessions() {
+      return [...seen];
     },
     answer(body) {
       if (!granted) return;
@@ -153,7 +171,7 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
       // A retry the server had seen already says nothing new.
       if (typeof accepted !== "number" || accepted <= 0) return;
       const replay = readReplayAnswer(body);
-      if (replay && refused.has(replay.session_id)) return;
+      if (replay && ended.has(replay.session_id)) return;
       if (replay && entry?.answer.session_id === replay.session_id) {
         entry.answer = replay;
         save();
@@ -162,30 +180,40 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
         return;
       }
       // Another session, or none: what is buffered still goes to the old one.
-      if (entry || recorder) stop(true);
-      entry = replay && { answer: replay, seq: 0, at: Date.now() };
-      save();
+      stop(true);
+      take(replay && { answer: replay, seq: numbers.get(replay.session_id) ?? 0, at: Date.now() });
       begin();
     },
     consent(next) {
       if (next === granted) return;
       granted = next;
       if (granted) {
-        entry ??= readEntry(
-          storage((store) => store.getItem(REPLAY_KEY)),
-          Date.now(),
-        );
-        if (entry && refused.has(entry.answer.session_id)) entry = undefined;
+        const stored =
+          entry ??
+          readEntry(
+            storage((store) => store.getItem(REPLAY_KEY)),
+            Date.now(),
+          );
+        if (stored && !ended.has(stored.answer.session_id)) {
+          numbers.set(stored.answer.session_id, stored.seq);
+          take(stored);
+        }
         begin();
         return;
       }
-      // Withdrawn: stop and drop the buffer and the tab's record (the base script sends the
-      // withdrawal).
+      // Withdrawn: every recorder stops and drops what it has, also those still sending for an
+      // earlier session; the tab's record goes (the base script sends the withdrawals).
       stop(false);
-      entry = undefined;
-      save();
+      for (const handle of closing.splice(0)) handle.stop(false);
+      take(undefined);
     },
-    reset: () => recorder?.cut(),
+    reset() {
+      // Logout: what was recorded leaves under the old ids, and the session ends here, so nothing
+      // after this is tied to it. Recording starts again only with a new decision of the server.
+      stop(true);
+      if (entry) ended.add(entry.answer.session_id);
+      take(undefined);
+    },
     hide: () => recorder?.hide(),
   };
 }

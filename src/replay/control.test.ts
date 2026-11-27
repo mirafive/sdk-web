@@ -32,8 +32,8 @@ function fakeRecorder() {
   const create: CreateReplay = (environment) => {
     environments.push(environment);
     const handle: ReplaySession = {
-      get session() {
-        return session;
+      get sessions() {
+        return session ? [session] : [];
       },
       answer(body) {
         const id = (body as { replay?: { session_id?: string } }).replay?.session_id;
