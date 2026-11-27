@@ -185,8 +185,9 @@ export function createRecorder(
     }
   }
 
-  begin();
-  if (stopped) return undefined;
+  // The full snapshot is one synchronous task as long as the page is large: it waits for a moment
+  // the browser has nothing else to do.
+  idle(host)(begin);
 
   return {
     update(next) {

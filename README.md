@@ -265,8 +265,10 @@ nothing and buffers nothing, and no request goes to the recording routes.
 - **Consent withdrawn** during a visit: the recorder stops, drops what it has, the tab's record
   goes, and the SDK asks the server to delete the session's recording
   (`POST /v1/replay/withdraw`). Every consent adapter and `consent()` work the same way.
-- **Never in the way:** events are turned into chunks when the browser is idle, every listener is
-  passive, every error is swallowed. Nothing is loaded or recorded while a page is prerendered or
+- **Never in the way:** recording starts and events are turned into chunks when the browser is
+  idle, every listener is passive, every error is swallowed. The one cost a page notices is the
+  full snapshot, a single task that grows with the page: about 10 ms for 4,500 nodes and 230 ms
+  for 27,000 on a phone-speed CPU. Nothing is loaded or recorded while a page is prerendered or
   hidden since it opened (a background tab) until it is shown.
 
 ## Consent banners (`consent: 'auto'`)

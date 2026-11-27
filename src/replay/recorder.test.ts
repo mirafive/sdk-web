@@ -70,12 +70,14 @@ function setup(path: string, options: { canCompress?: boolean; throws?: boolean 
     canCompress: options.canCompress ?? true,
     compress: async (bytes) => storedGzip(bytes),
   });
+  /** The recorder starts when the browser is idle (a timer here). */
+  const ready = () => tick(60);
   const go = (next: string) => {
     (fake.host.location as { pathname?: string }).pathname = next;
   };
   const emit = (type: number, timestamp: number) =>
     runs.at(-1)?.options.emit({ type, data: {}, timestamp });
-  return { handle, runs, stops, chunks, go, emit, snapshots, fake };
+  return { handle, runs, stops, chunks, go, emit, snapshots, fake, ready };
 }
 
 const flush = async () => {
@@ -84,8 +86,16 @@ const flush = async () => {
 };
 
 describe("recording a page", () => {
-  test("rrweb gets the masking options and the two plugins", () => {
-    const { runs } = setup("/");
+  test("rrweb starts when the browser is idle, not while the page is busy", async () => {
+    const { runs, ready } = setup("/");
+    expect(runs).toHaveLength(0);
+    await ready();
+    expect(runs).toHaveLength(1);
+  });
+
+  test("rrweb gets the masking options and the two plugins", async () => {
+    const { runs, ready } = setup("/");
+    await ready();
     expect(runs).toHaveLength(1);
     expect(runs[0]!.options).toMatchObject({ maskTextSelector: "*", maskAllInputs: false });
     expect(runs[0]!.options.plugins.map((plugin: { name: string }) => plugin.name)).toEqual([
@@ -95,7 +105,8 @@ describe("recording a page", () => {
   });
 
   test("events become chunks naming their pages", async () => {
-    const { handle, emit, chunks } = setup("/");
+    const { handle, emit, chunks, ready } = setup("/");
+    await ready();
     emit(4, 1);
     emit(2, 2);
     emit(3, 3);
@@ -106,22 +117,30 @@ describe("recording a page", () => {
     expect(chunks.every((chunk) => chunk.pages.join() === "/")).toBe(true);
   });
 
-  test("a browser without CompressionStream records nothing", () => {
-    const { handle, runs } = setup("/", { canCompress: false });
+  test("a browser without CompressionStream records nothing", async () => {
+    const { handle, runs, ready } = setup("/", { canCompress: false });
+    await ready();
     expect(handle).toBeUndefined();
     expect(runs).toHaveLength(0);
   });
 
-  test("rrweb that throws stops recording for the page, and nothing reaches the page", () => {
-    const { handle, stops } = setup("/", { throws: true });
-    expect(handle).toBeUndefined();
+  test("rrweb that throws stops recording for the page, and nothing reaches the page", async () => {
+    const { handle, stops, ready, emit } = setup("/", { throws: true });
+    await ready();
     expect(stops).toEqual(["page"]);
+    // The handle stays harmless.
+    expect(() => {
+      emit(3, 1);
+      handle?.hide();
+      handle?.stop(true);
+    }).not.toThrow();
   });
 });
 
 describe("pages that are never recorded", () => {
-  test("a visit that starts on one records nothing until it leaves it", () => {
-    const { runs, go } = setup("/account/orders");
+  test("a visit that starts on one records nothing until it leaves it", async () => {
+    const { runs, go, ready } = setup("/account/orders");
+    await ready();
     expect(runs).toHaveLength(0);
     go("/account/profile");
     intervals[0]!();
@@ -132,7 +151,8 @@ describe("pages that are never recorded", () => {
   });
 
   test("a single-page navigation to one: nothing of it is kept, rrweb stops, and resumes after", async () => {
-    const { runs, go, emit, chunks } = setup("/");
+    const { runs, go, emit, chunks, ready } = setup("/");
+    await ready();
     emit(4, 1);
     emit(2, 2);
     emit(3, 3);
@@ -153,7 +173,8 @@ describe("pages that are never recorded", () => {
   });
 
   test("a later batch that adds the current page to the list pauses at once", async () => {
-    const { handle, runs, emit, chunks } = setup("/members");
+    const { handle, runs, emit, chunks, ready } = setup("/members");
+    await ready();
     emit(3, 1);
     handle!.update(answerOf({ never_record: ["/members*"] }));
     emit(3, 2);
@@ -165,7 +186,8 @@ describe("pages that are never recorded", () => {
 
 describe("stopping", () => {
   test("withdrawn consent: rrweb stops and nothing more is sent", async () => {
-    const { handle, runs, emit, chunks } = setup("/");
+    const { handle, runs, emit, chunks, ready } = setup("/");
+    await ready();
     emit(3, 1);
     handle!.stop(false);
     emit(3, 2);
@@ -175,7 +197,8 @@ describe("stopping", () => {
   });
 
   test("another session: what was recorded still goes", async () => {
-    const { handle, emit, chunks } = setup("/");
+    const { handle, emit, chunks, ready } = setup("/");
+    await ready();
     emit(3, 1);
     await flush();
     handle!.stop(true);

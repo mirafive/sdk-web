@@ -23,10 +23,14 @@
 
 ### Changed
 
-- The script tag grew from 9.9 to 10.7 kB gzip (10,122 to 11,021 bytes): the answer, the consent
+- The script tag grew from 9.9 to 10.8 kB gzip (10,122 to 11,022 bytes): the answer, the consent
   hook and the loader; the recorder itself is 29 kB gzip in its own file. The pixel file is
   11.7 kB (11,785 to 11,968 bytes) and never records. CI's budget for the script tag is now 11 kB.
 - Requires `@mirafive/protocol` 2.5.0.
+- What recording costs a page, measured with a 4× CPU slowdown at a phone's viewport (median of
+  5 to 7 runs, against the same page without recording): LCP +4 to +20 ms, CLS unchanged, INP
+  +16 ms; blocking time +8 ms on a page of about 4,500 nodes and +233 ms on one of about 27,000,
+  nearly all of it the full snapshot, which rrweb takes in one task when the browser is idle.
 
 ## 2.2.0 — 2026-11-23
 
