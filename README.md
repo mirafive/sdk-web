@@ -3,8 +3,10 @@
 The MIRA FIVE browser SDK: consent-aware analytics and revenue attribution for websites and web
 apps. It follows the site's consent banner on its own, works cookieless until consent is given,
 captures pageviews (also in single-page apps), engagement, outbound clicks, downloads and form
-submits, and never throws into your page. About 10 kB gzip with every consent adapter; no
-dependencies besides `@mirafive/protocol`.
+submits, and never throws into your page. About 11 kB gzip with every consent adapter; no
+dependencies besides `@mirafive/protocol`. For a project that records sessions, a separate
+recorder file (about 29 kB gzip) loads only when the server records the visit and the visitor
+allows analytics.
 
 Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),
 [`@mirafive/next`](https://github.com/mirafive/sdk-next),
@@ -190,20 +192,20 @@ mira.track("video_progress", { percent: 50, $non_interaction: true });
 
 ## What is collected at each consent tier
 
-|                                                        | T0: no analytics consent (`unknown`, `denied`)  | T1: analytics consent                                                               | T2: T1 + `identify` | T3: + marketing consent |
-| ------------------------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------- | ----------------------- |
-| Device storage (cookies, localStorage, sessionStorage) | **never read or written**                       | `mira_aid`, `mira_uid`, `mira_gid`, and the unsent queue (`mira_q`) in localStorage | same                | same                    |
-| `anonymous_id`                                         | no                                              | yes (UUIDv7)                                                                        | yes                 | yes                     |
-| `user_id`, `group_id`, traits                          | no (kept in memory, sent once consent is given) | no `user_id` until `identify`                                                       | yes                 | yes                     |
-| `session_id`                                           | no (sessions are made by the server)            | no                                                                                  | no                  | no                      |
-| Page URL, referrer, title                              | yes                                             | yes                                                                                 | yes                 | yes                     |
-| Locale (`navigator.language`)                          | no (the server reads `Accept-Language`)         | yes (`de-DE`)                                                                       | yes                 | yes                     |
-| Screen, viewport, pixel ratio, languages, time zone    | no                                              | yes                                                                                 | yes                 | yes                     |
-| Client hints (device model, OS version)                | no (never asked for)                            | yes, asked once after consent                                                       | yes                 | yes                     |
-| Location from `setLocation`                            | no (kept in memory only)                        | yes, rounded to 2 decimals                                                          | yes                 | yes                     |
-| External ids (`identify` options)                      | no (kept in memory, sent once consent is given) | with `identify`                                                                     | yes                 | yes                     |
-| `consent` stamp on every event                         | yes                                             | yes                                                                                 | yes                 | yes                     |
-| Click ids kept by the server                           | no                                              | no                                                                                  | no                  | yes                     |
+|                                                        | T0: no analytics consent (`unknown`, `denied`)  | T1: analytics consent                                                                                                                            | T2: T1 + `identify` | T3: + marketing consent |
+| ------------------------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | ----------------------- |
+| Device storage (cookies, localStorage, sessionStorage) | **never read or written**                       | `mira_aid`, `mira_uid`, `mira_gid`, and the unsent queue (`mira_q`) in localStorage; `mira_replay` in sessionStorage while a session is recorded | same                | same                    |
+| `anonymous_id`                                         | no                                              | yes (UUIDv7)                                                                                                                                     | yes                 | yes                     |
+| `user_id`, `group_id`, traits                          | no (kept in memory, sent once consent is given) | no `user_id` until `identify`                                                                                                                    | yes                 | yes                     |
+| `session_id`                                           | no (sessions are made by the server)            | no                                                                                                                                               | no                  | no                      |
+| Page URL, referrer, title                              | yes                                             | yes                                                                                                                                              | yes                 | yes                     |
+| Locale (`navigator.language`)                          | no (the server reads `Accept-Language`)         | yes (`de-DE`)                                                                                                                                    | yes                 | yes                     |
+| Screen, viewport, pixel ratio, languages, time zone    | no                                              | yes                                                                                                                                              | yes                 | yes                     |
+| Client hints (device model, OS version)                | no (never asked for)                            | yes, asked once after consent                                                                                                                    | yes                 | yes                     |
+| Location from `setLocation`                            | no (kept in memory only)                        | yes, rounded to 2 decimals                                                                                                                       | yes                 | yes                     |
+| External ids (`identify` options)                      | no (kept in memory, sent once consent is given) | with `identify`                                                                                                                                  | yes                 | yes                     |
+| `consent` stamp on every event                         | yes                                             | yes                                                                                                                                              | yes                 | yes                     |
+| Click ids kept by the server                           | no                                              | no                                                                                                                                               | no                  | yes                     |
 
 IP and user agent are request data. The server turns the IP into geo at ingest and discards it.
 
@@ -217,6 +219,54 @@ changes the stamp.
 denied. GPC is a legally binding opt-out of selling or sharing in several US states, and marketing
 consent exists to share data with ad platforms. Analytics stays the CMP's decision. Do Not Track is
 not read: it has no legal weight, and the CMP is where the person decides.
+
+## Session recording
+
+When a project records sessions, the server decides which visits are recorded, never the page: the
+answer to a batch says so (`replay`, in `@mirafive/protocol`). Only then, and only with analytics
+consent, does the SDK load the recorder. A visit below analytics consent loads nothing, records
+nothing and buffers nothing, and no request goes to the recording routes.
+
+- **Loading:** the script tag loads `mira-recorder@<version>.js` of its own release from beside
+  itself (`/sdk/mira.js`, `/sdk/v2/mira.js` and `/sdk/mira@2.3.0.js` all load
+  `/sdk/mira-recorder@2.3.0.js`), checked by the integrity hash `mira.js` carries, so a page that
+  pins `mira.js` with Subresource Integrity pins the recorder too. A first-party proxy must forward
+  that file like the script; a copied, self-hosted `mira.js` without it records nothing. With npm,
+  `createMira` loads it with a dynamic `import()`, which your bundler splits into a chunk of its
+  own. The recorder is `@rrweb/record` 2.2.2, bundled into that file and chunk (MIT; its license is
+  in them), so the package has no dependency on it.
+- **Across pages:** the decision and the chunk numbers are kept in the tab's `sessionStorage`
+  (`mira_replay`), so the next page of a site that loads a document per page records from its
+  first moment. On the first page of a visit the recording starts with the first batch's answer,
+  about 2 seconds after load, with a full picture of the page as it is then. A batch sent by
+  `sendBeacon` gets no answer; the next page's first batch brings it.
+- **Masked in the browser:** every form input shows a fixed `***` (an empty one stays empty), so
+  lengths do not leak; hidden inputs too. Passwords, payment fields (`autocomplete="cc-…"`) and
+  one-time codes are replaced by a placeholder of their size, and no setting can unmask them.
+  `data-mira-mask` masks an element's text, `data-mira-block` replaces an element, `data-mira-ignore`
+  drops its input events. The project chooses `standard` (text masked on its sensitive pages) or
+  `strict` (text masked everywhere) and pages that are never recorded; single-page navigations
+  are checked against both on every recorded event. All other text, and attribute values that can
+  hold what a person typed (`title`, `alt`, `placeholder`, `aria-*`, `data-*`, `value`, `href`),
+  pass the PII guard of `@mirafive/protocol` (`redactPii`: emails, IBANs, phone numbers, card
+  numbers); a `mailto:` or `tel:` link keeps only its scheme. No canvas, no fonts, no images
+  inlined, no frame's `src`, no frames of other origins. Stylesheets of browser extensions are
+  dropped.
+- **Problems on the timeline:** console errors, uncaught exceptions and failed requests (method,
+  the URL's origin and path, status, duration; never a body, header or query) are recorded beside
+  the page, through the same guard, at most 100 per page.
+- **Sent in chunks:** a page's full snapshot at once, then a chunk every 30 seconds or at 256 KB,
+  gzipped by the browser's `CompressionStream` and sent one at a time as a CORS simple request
+  (`POST /v1/replay`, everything in the URL). On page hide the rest goes in a beacon. A browser
+  without `CompressionStream` (before 2023) records nothing. A refusal stops recording for the
+  page (`401`, `402`, `403`, a second `429` or `503`) or the session (`409`); a `400` or `413`
+  takes a new full snapshot, and a slow or failing upload drops the recording and nothing else.
+- **Consent withdrawn** during a visit: the recorder stops, drops what it has, the tab's record
+  goes, and the SDK asks the server to delete the session's recording
+  (`POST /v1/replay/withdraw`). Every consent adapter and `consent()` work the same way.
+- **Never in the way:** events are turned into chunks when the browser is idle, every listener is
+  passive, every error is swallowed. Nothing is loaded or recorded while a page is prerendered or
+  hidden since it opened (a background tab) until it is shown.
 
 ## Consent banners (`consent: 'auto'`)
 
