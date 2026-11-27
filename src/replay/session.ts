@@ -1,25 +1,33 @@
 /**
  * Recording for one page, in the recorder file (docs/replay.md, Wire, 1): the server's decision from
  * each batch's `202`, the tab's record of it in `sessionStorage` (the next page records from its
- * first moment and goes on with the chunk numbers), and when to start, change or stop the recorder.
+ * first moment and goes on with the tab's stream), and when to start, change or stop the recorder.
+ *
+ * A recording is one stream per tab: the server gives two tabs of one visit the same session, so
+ * each tab names itself (`tab`, a random id kept in the tab's record) and numbers its chunks from
+ * 0. A tab whose record was copied from another live tab (`control.ts`, `LIVE_KEY`) gets a new id.
  */
-import { readReplayAnswer, REPLAY_LIMITS, type ReplayAnswer } from "@mirafive/protocol";
+import { isTabId, readReplayAnswer, REPLAY_LIMITS, type ReplayAnswer } from "@mirafive/protocol";
 
-import { KEYS } from "../storage";
-import { REPLAY_KEY, type ReplayEnvironment, type ReplaySession } from "./control";
+import { LIVE_KEY, REPLAY_KEY, type ReplayEnvironment, type ReplaySession } from "./control";
 
 /**
- * The next chunk number of a session, shared by the visitor's tabs (`localStorage`, T1 only): the
- * server gives two tabs of one visit the same session, and a number used twice would overwrite a
- * stored chunk.
+ * The tab's record of a recorded session: the decision, the tab's id, its next chunk number, when
+ * it was made. Without a tab (a copied record, `dropTab`), the page records as a new tab.
  */
-export const SEQ_KEY = KEYS.replaySeq;
-
-/** The tab's record of a recorded session: the decision, the next chunk number, when it was made. */
 export interface ReplayEntry {
   answer: ReplayAnswer;
+  tab?: string;
   seq: number;
   at: number;
+}
+
+/** A new tab id: 16 characters of base64url from 12 random bytes (`TAB_ID`). */
+export function newTabId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_");
 }
 
 /** The record as stored, or `undefined` when it is missing, malformed or older than a decision lives. */
@@ -27,14 +35,16 @@ export function readEntry(raw: string | null | undefined, now: number): ReplayEn
   try {
     const value: unknown = JSON.parse(raw ?? "null");
     if (typeof value !== "object" || value === null) return undefined;
-    const { answer, seq, at } = value as Record<string, unknown>;
+    const { answer, tab, seq, at } = value as Record<string, unknown>;
     const read = readReplayAnswer({ replay: answer });
     if (!read || typeof seq !== "number" || !Number.isInteger(seq) || typeof at !== "number") {
       return undefined;
     }
     if (seq < 0 || seq > REPLAY_LIMITS.maxSequence) return undefined;
     if (now - at > REPLAY_LIMITS.sessionMs || at > now + REPLAY_LIMITS.futureMs) return undefined;
-    return { answer: read, seq, at };
+    // A tab id that is not one starts the page as a new tab, from chunk 0.
+    if (typeof tab !== "string" || !isTabId(tab)) return { answer: read, seq: 0, at };
+    return { answer: read, tab, seq, at };
   } catch {
     return undefined;
   }
@@ -43,7 +53,9 @@ export function readEntry(raw: string | null | undefined, now: number): ReplayEn
 /** What the recorder of one page gets. */
 export interface RecorderContext extends ReplayEnvironment {
   answer: ReplayAnswer;
-  /** Takes the next chunk number of the session and keeps it for the tab's next page. */
+  /** The tab's id: its stream of the session. */
+  tab: string;
+  /** Takes the next chunk number of the tab's stream and keeps it for the tab's next page. */
   nextSeq(): number;
   /** The recorder stopped on its own: for this page (401, 402, 403, repeated 429) or the session (409). */
   stopped(scope: "page" | "session"): void;
@@ -56,6 +68,11 @@ export interface RecorderHandle {
   cut(): void;
   /** The page is hidden or left: send what fits a beacon. */
   hide(): void;
+  /**
+   * The page came back from the back-forward cache: another page of the tab may have recorded in
+   * between, so the stream goes on from a new full snapshot.
+   */
+  resume(): void;
   /** Stops. `keep`: send what is buffered; otherwise drop it (consent withdrawn). */
   stop(keep: boolean): void;
 }
@@ -101,8 +118,10 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
    * answers start nothing on this page.
    */
   const ended = new Set<string>();
-  /** The next chunk number of each session this page recorded, so a session never reuses one. */
+  /** The next chunk number of each session this page recorded, so a stream never reuses one. */
   const numbers = new Map<string, number>();
+  /** This tab's id: from its record, or made when it first records. */
+  let tabId: string | undefined;
   /** Recorders of earlier sessions still sending what they had: dropped if consent goes. */
   const closing: RecorderHandle[] = [];
   /** Every session this page knew to be recorded, for the withdrawal. */
@@ -117,31 +136,35 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
       return undefined;
     }
   };
+  // The record, and the claim that a document of this tab records now (`LIVE_KEY`), go together.
   const save = () =>
-    storage((store) =>
-      entry ? store.setItem(REPLAY_KEY, JSON.stringify(entry)) : store.removeItem(REPLAY_KEY),
+    storage((store) => {
+      if (!entry) {
+        store.removeItem(REPLAY_KEY);
+        store.removeItem(LIVE_KEY);
+        return;
+      }
+      store.setItem(REPLAY_KEY, JSON.stringify(entry));
+      store.setItem(LIVE_KEY, "1");
+    });
+  /**
+   * The next number the tab's record holds for this stream, or 0: an earlier page of the tab, back
+   * from the back-forward cache, goes on after what the pages in between sent.
+   */
+  const recorded = (id: string, tab: string): number => {
+    const stored = readEntry(
+      storage((store) => store.getItem(REPLAY_KEY)),
+      Date.now(),
     );
-  /** The next number the visitor's other tabs left for `id`, or 0. */
-  const shared = (id: string): number => {
-    try {
-      const value: unknown = JSON.parse(host.localStorage.getItem(SEQ_KEY) ?? "null");
-      const { s, n } = (value ?? {}) as { s?: unknown; n?: unknown };
-      return s === id && typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : 0;
-    } catch {
-      return 0;
-    }
-  };
-  const share = (id: string | undefined, next: number) => {
-    try {
-      if (id) host.localStorage.setItem(SEQ_KEY, JSON.stringify({ s: id, n: next }));
-      else host.localStorage.removeItem(SEQ_KEY);
-    } catch {
-      // Without storage each tab counts on its own.
-    }
+    return stored?.answer.session_id === id && stored.tab === tab ? stored.seq : 0;
   };
   const take = (next: ReplayEntry | undefined) => {
+    if (next) {
+      tabId = next.tab ?? tabId ?? newTabId();
+      next.tab = tabId;
+      seen.add(next.answer.session_id);
+    }
     entry = next;
-    if (next) seen.add(next.answer.session_id);
     save();
   };
 
@@ -159,16 +182,17 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
     if (!granted || !entry || recorder || waiting || pageStopped) return;
     const own = entry;
     const id = own.answer.session_id;
+    const tab = own.tab ?? newTabId();
     waiting = whenShown(host.document, () => {
       waiting = undefined;
       if (!granted || entry !== own || recorder) return;
       recorder = start({
         ...environment,
         answer: own.answer,
+        tab,
         nextSeq: () => {
-          const seq = Math.max(own.seq, shared(id));
+          const seq = Math.max(own.seq, entry === own ? recorded(id, tab) : 0);
           own.seq = seq + 1;
-          share(id, own.seq);
           numbers.set(id, own.seq);
           if (entry === own) save();
           return seq;
@@ -233,7 +257,6 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
       stop(false);
       for (const handle of closing.splice(0)) handle.stop(false);
       take(undefined);
-      share(undefined, 0);
     },
     reset() {
       // Logout: what was recorded leaves under the old ids, and the session ends here, so nothing
@@ -243,5 +266,13 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
       take(undefined);
     },
     hide: () => recorder?.hide(),
+    shown(persisted) {
+      if (!persisted || !entry) return;
+      // Back from the back-forward cache: this document records in the tab again, after what the
+      // pages in between sent.
+      if (entry.tab) entry.seq = Math.max(entry.seq, recorded(entry.answer.session_id, entry.tab));
+      save();
+      recorder?.resume();
+    },
   };
 }

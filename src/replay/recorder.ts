@@ -196,6 +196,11 @@ export function createRecorder(
     },
     cut: () => chunker.cut(),
     hide: () => chunker.hide(),
+    resume() {
+      if (stopped || paused || !stopRecord) return;
+      chunker.cut();
+      rrweb.takeFullSnapshot();
+    },
     stop(keep) {
       halt();
       chunker.stop(keep);

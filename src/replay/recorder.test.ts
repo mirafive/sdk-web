@@ -63,6 +63,7 @@ function setup(path: string, options: { canCompress?: boolean; throws?: boolean 
     query: () => ({ consent_analytics: "granted", consent_marketing: "denied" }),
     warn: () => {},
     answer: answerOf(),
+    tab: "Xk2_9-pQr7Ta",
     nextSeq: () => seq++,
     stopped: (scope) => stops.push(scope),
   };

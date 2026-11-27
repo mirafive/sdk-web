@@ -16,16 +16,22 @@
   recorded beside the page. Chunks go one at a time in the background; a refusal or a slow upload
   stops the recording, never the page. Withdrawing analytics consent stops recording and asks the
   server to delete the session's recording. See the README, Session recording.
-- The tab keeps `mira_replay` in `sessionStorage` while a session is recorded (T1 only), so the
-  next page records from its first moment, and `mira_replay_seq` in `localStorage`, the session's
-  next chunk number, which the visitor's tabs share; withdrawn consent removes both.
+- A recording is one stream per tab: two tabs of one visit share the server's session, so each
+  tab names itself with a random id and numbers its chunks from 0. The tab keeps `mira_replay` in
+  `sessionStorage` while a session is recorded (T1 only): the decision, the tab's id and its next
+  chunk number, so the next page records from its first moment in the same stream. Beside it,
+  `mira_replay_live` marks that a page of the tab records now; it goes on `pagehide`. A tab whose
+  `sessionStorage` the browser copied from a tab still open (a duplicated tab, `window.open`, a
+  link that keeps the opener) finds the mark and records as a new tab. A page back from the
+  back-forward cache goes on after the pages in between, from a new full snapshot. Withdrawn
+  consent removes both.
 - The transport reads the body of a batch's `202`; until now it read only the status.
 
 ### Changed
 
-- The script tag grew from 9.9 to 10.8 kB gzip (10,122 to 11,022 bytes): the answer, the consent
+- The script tag grew from 9.9 to 10.9 kB gzip (10,122 to 11,160 bytes): the answer, the consent
   hook and the loader; the recorder itself is 29 kB gzip in its own file. The pixel file is
-  11.7 kB (11,785 to 11,968 bytes) and never records. CI's budget for the script tag is now 11 kB.
+  11.7 kB (11,785 to 11,971 bytes) and never records. CI's budget for the script tag is now 11 kB.
 - Requires `@mirafive/protocol` 2.5.0.
 - What recording costs a page, measured with a 4× CPU slowdown at a phone's viewport (median of
   5 to 7 runs, against the same page without recording): LCP +4 to +20 ms, CLS unchanged, INP

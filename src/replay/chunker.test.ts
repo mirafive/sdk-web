@@ -67,6 +67,7 @@ function setup(answers: (number | "network" | "hang" | [number, Record<string, s
     ingest: "https://ingest.example",
     key: "mira_pk_test",
     session: SESSION,
+    tab: "Xk2_9-pQr7Ta",
     fetch: (async (url: string, init: RequestInit) => {
       const blob = init.body as Blob;
       sent.push({
@@ -201,6 +202,7 @@ describe("cutting", () => {
     expect(Object.fromEntries(request!.url.searchParams)).toMatchObject({
       key: "mira_pk_test",
       session: SESSION,
+      tab: "Xk2_9-pQr7Ta",
       seq: "0",
       start: "100",
       end: "150",

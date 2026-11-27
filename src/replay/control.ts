@@ -9,8 +9,30 @@ import type { ConsentState } from "@mirafive/protocol";
 
 import type { Host } from "../consent/types";
 
-/** In `sessionStorage`: the decision and the next chunk number, for the tab's next page; T1 only. */
+/**
+ * In `sessionStorage`: the decision, the tab's id and its next chunk number, for the tab's next
+ * page; T1 only.
+ */
 export const REPLAY_KEY = "mira_replay";
+
+/**
+ * In `sessionStorage` while a document of the tab records, removed on `pagehide`. A browser copies
+ * a tab's `sessionStorage` into a tab made from it (duplicating a tab, `window.open` and links that
+ * keep the opener), so a page that finds the mark at its start was copied from a tab still open:
+ * it keeps the decision but drops the tab's id and numbers (`dropTab`), and records as a tab of
+ * its own. The next page of the same tab finds no mark: the page before removed it when it left.
+ * A mark left behind (a crash) only makes the next page a new tab, never two tabs one.
+ */
+export const LIVE_KEY = "mira_replay_live";
+
+/** A copied record: the decision stays, the tab's id and chunk numbers go. */
+export function dropTab(store: Storage): void {
+  const raw = store.getItem(REPLAY_KEY);
+  const value: unknown = JSON.parse(raw ?? "null");
+  if (typeof value !== "object" || value === null) return;
+  const { tab: _tab, ...rest } = value as Record<string, unknown>;
+  store.setItem(REPLAY_KEY, JSON.stringify({ ...rest, seq: 0 }));
+}
 
 /** What recording needs from the page's SDK instance. */
 export interface ReplayEnvironment {
@@ -39,6 +61,8 @@ export interface ReplayControl {
   reset(): void;
   /** Page hide. */
   hide(): void;
+  /** `pageshow`: `persisted` when the page came back from the back-forward cache. */
+  shown(persisted: boolean): void;
 }
 
 /** The recorder file's side: the whole of recording for one page. */
@@ -82,8 +106,18 @@ export const replayControl =
     const forget = () => {
       try {
         host.sessionStorage.removeItem(REPLAY_KEY);
+        host.sessionStorage.removeItem(LIVE_KEY);
       } catch {
         // Nothing to remove.
+      }
+    };
+    /** The tab's mark goes when the page is left (also into the back-forward cache). */
+    let watching = false;
+    const leave = () => {
+      try {
+        host.sessionStorage.removeItem(LIVE_KEY);
+      } catch {
+        // No storage, no mark.
       }
     };
 
@@ -115,10 +149,20 @@ export const replayControl =
         if (next) {
           if (full) return full.consent(true);
           try {
-            const stored = JSON.parse(host.sessionStorage.getItem(REPLAY_KEY) ?? "null");
+            const store = host.sessionStorage;
+            const stored = JSON.parse(store.getItem(REPLAY_KEY) ?? "null");
             session = idOf(stored?.answer?.session_id);
+            if (session) {
+              // Copied from a tab still open: a tab of its own. Then this page holds the mark.
+              if (store.getItem(LIVE_KEY) !== null) dropTab(store);
+              store.setItem(LIVE_KEY, "1");
+            }
           } catch {
             // No storage, no record.
+          }
+          if (!watching) {
+            watching = true;
+            host.addEventListener("pagehide", leave);
           }
           if (session) void start();
           return;
@@ -144,5 +188,17 @@ export const replayControl =
         forget();
       },
       hide: () => full?.hide(),
+      shown(persisted) {
+        if (!persisted || !granted) return;
+        if (full) return full.shown(true);
+        // Back from the back-forward cache before the recorder was there: the mark again.
+        if (session) {
+          try {
+            host.sessionStorage.setItem(LIVE_KEY, "1");
+          } catch {
+            // No storage, no mark.
+          }
+        }
+      },
     };
   };

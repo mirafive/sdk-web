@@ -1,10 +1,11 @@
 /* oxlint-disable typescript/no-unsafe-type-assertion -- test fakes stand in for browser globals */
 import { describe, expect, test } from "bun:test";
 
-import type { ReplayAnswer } from "@mirafive/protocol";
+import { isTabId, type ReplayAnswer } from "@mirafive/protocol";
 
 import { fakeHost } from "../test/fake-host";
-import { REPLAY_KEY, type ReplayEnvironment } from "./control";
+
+import { LIVE_KEY, REPLAY_KEY, type ReplayEnvironment } from "./control";
 import {
   readEntry,
   replaySession,
@@ -42,6 +43,7 @@ function setup(options: { fake?: ReturnType<typeof fakeHost>; unavailable?: bool
       cut: () => log.push(`${name} cut`),
       hide: () => log.push(`${name} hide`),
       stop: (keep) => log.push(`${name} stop ${keep ? "keep" : "drop"}`),
+      resume: () => log.push(`${name} resume`),
     };
     return handle;
   };
@@ -144,27 +146,67 @@ describe("the next page of the tab", () => {
     expect(next.started[0]!.nextSeq()).toBe(2);
   });
 
-  test("another tab of the same visit never reuses a chunk number", () => {
+  test("the next page of the tab keeps the tab's id", () => {
+    const first = setup();
+    first.session.consent(true);
+    first.session.answer(body(answerOf(A)));
+    const tab = first.started[0]!.tab;
+    expect(isTabId(tab)).toBe(true);
+    first.started[0]!.nextSeq();
+    // The page is left: its mark goes (control.ts does this on pagehide).
+    first.fake.storage.removeItem(LIVE_KEY);
+    const next = setup({ fake: first.fake });
+    next.session.consent(true);
+    expect(next.started[0]!.tab).toBe(tab);
+    expect(next.started[0]!.nextSeq()).toBe(1);
+  });
+
+  test("another tab of the same visit is a stream of its own, numbered from 0", () => {
     const first = setup();
     first.session.consent(true);
     first.session.answer(body(answerOf(A)));
     expect([first.started[0]!.nextSeq(), first.started[0]!.nextSeq()]).toEqual([0, 1]);
 
-    // A second tab: its own sessionStorage, the visitor's localStorage, the same server session.
-    const tab = fakeHost();
-    const shared = first.fake.storage;
-    Object.defineProperty(tab.host, "localStorage", { get: () => shared });
-    const second = setup({ fake: tab });
+    // A second tab: its own sessionStorage, the same server session.
+    const second = setup({ fake: fakeHost() });
     second.session.consent(true);
     second.session.answer(body(answerOf(A)));
-    expect(second.started[0]!.nextSeq()).toBe(2);
+    expect(second.started[0]!.tab).not.toBe(first.started[0]!.tab);
+    expect(second.started[0]!.nextSeq()).toBe(0);
+    expect(first.started[0]!.nextSeq()).toBe(2);
+  });
+
+  test("a page back from the back-forward cache goes on after the pages in between", () => {
+    const first = setup();
+    first.session.consent(true);
+    first.session.answer(body(answerOf(A)));
+    const tab = first.started[0]!.tab;
+    expect(first.started[0]!.nextSeq()).toBe(0);
+    // Left into the cache; the next page of the tab records chunks 1 and 2.
+    first.fake.storage.removeItem(LIVE_KEY);
+    const next = setup({ fake: first.fake });
+    next.session.consent(true);
+    expect([next.started[0]!.nextSeq(), next.started[0]!.nextSeq()]).toEqual([1, 2]);
+    // Back: the first page records in the tab again, from a new snapshot, after chunk 2.
+    first.session.shown(true);
+    expect(first.log).toEqual(["9abc#1 resume"]);
+    expect(first.started[0]!.tab).toBe(tab);
     expect(first.started[0]!.nextSeq()).toBe(3);
   });
 
   test("a record older than a decision lives, or a malformed one, is ignored", () => {
     const now = Date.now();
     const answer = answerOf(A);
-    expect(readEntry(JSON.stringify({ answer, seq: 4, at: now - 1000 }), now)?.seq).toBe(4);
+    expect(
+      readEntry(JSON.stringify({ answer, tab: "tabAAAAAAAA", seq: 4, at: now - 1000 }), now),
+    ).toMatchObject({ tab: "tabAAAAAAAA", seq: 4 });
+    // Without a tab id (a copied record), or with one that is none: a new tab, from chunk 0.
+    for (const tab of [undefined, "../x", "short"]) {
+      const read = readEntry(JSON.stringify({ answer, tab, seq: 4, at: now }), now);
+      expect(read?.answer.session_id).toBe(A);
+      expect(read?.tab).toBeUndefined();
+      expect(read?.seq).toBe(0);
+    }
     for (const raw of [
       JSON.stringify({ answer, seq: 4, at: now - 25 * 60 * 60 * 1000 }),
       JSON.stringify({ answer, seq: -1, at: now }),

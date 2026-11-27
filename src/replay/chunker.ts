@@ -80,7 +80,7 @@ export interface Chunk {
 
 export interface ChunkerDeps extends Pick<
   RecorderContext,
-  "ingest" | "key" | "fetch" | "beacon" | "nextSeq" | "query"
+  "ingest" | "key" | "fetch" | "beacon" | "tab" | "nextSeq" | "query"
 > {
   compress(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>>;
   now(): number;
@@ -103,13 +103,14 @@ const encoder = new TextEncoder();
 
 /** The URL of one chunk. */
 export function chunkUrl(
-  deps: { ingest: string; key: string; session: string },
+  deps: { ingest: string; key: string; session: string; tab: string },
   chunk: Chunk,
   sent: number,
 ) {
   const query: ChunkQuery = {
     key: deps.key,
     session: deps.session,
+    tab: deps.tab,
     seq: chunk.seq,
     start: chunk.start,
     end: chunk.end,

@@ -6,6 +6,7 @@ import { createMira, type MiraOptions } from "../mira";
 import { fakeHost, tick } from "../test/fake-host";
 import { Transport } from "../transport";
 import {
+  LIVE_KEY,
   REPLAY_KEY,
   replayControl,
   type CreateReplay,
@@ -43,6 +44,7 @@ function fakeRecorder() {
       consent: (granted) => calls.push(`consent:${granted}`),
       reset: () => calls.push("reset"),
       hide: () => calls.push("hide"),
+      shown: (persisted) => calls.push(`shown:${persisted}`),
     };
     return handle;
   };
@@ -346,5 +348,82 @@ describe("the transport hands over the answer", () => {
     });
     expect(fake.requests).toHaveLength(1);
     expect(transport.size).toBe(0);
+  });
+});
+
+const stored = (fake: ReturnType<typeof fakeHost>) =>
+  JSON.parse(fake.storage.getItem(REPLAY_KEY) ?? "null") as { tab?: string; seq: number };
+
+describe("which tab a page records as", () => {
+  const TAB = "tabAAAAAAAA";
+  const record = (fake: ReturnType<typeof fakeHost>, live: boolean) => {
+    fake.storage.setItem(
+      REPLAY_KEY,
+      JSON.stringify({ answer: replay, tab: TAB, seq: 5, at: Date.now() }),
+    );
+    if (live) fake.storage.setItem(LIVE_KEY, "1");
+  };
+
+  test("the next page of the tab (the page before left and took its mark) keeps the tab", async () => {
+    const { fake, recorder } = start({ consent: { analytics: true } }, (host) =>
+      record(host, false),
+    );
+    await tick();
+    expect(recorder.loads()).toBe(1);
+    expect(stored(fake)).toMatchObject({ tab: TAB, seq: 5 });
+    // This page holds the mark now.
+    expect(fake.storage.getItem(LIVE_KEY)).toBe("1");
+  });
+
+  test("a copy of a tab that is still open (duplicated, window.open) records as a new tab", async () => {
+    // The browser copied the tab's sessionStorage with the open tab's mark in it.
+    const { fake, recorder } = start({ consent: { analytics: true } }, (host) =>
+      record(host, true),
+    );
+    await tick();
+    expect(recorder.loads()).toBe(1);
+    // The decision stays, so the copy records from its first moment; tab and numbers go.
+    const copy = stored(fake);
+    expect(copy.tab).toBeUndefined();
+    expect(copy.seq).toBe(0);
+    expect(JSON.parse(fake.storage.getItem(REPLAY_KEY)!).answer.session_id).toBe(SESSION);
+    expect(fake.storage.getItem(LIVE_KEY)).toBe("1");
+  });
+
+  test("leaving the page takes the mark; coming back from the cache reaches the recorder", async () => {
+    const { fake, recorder } = start({ consent: { analytics: true } }, (host) =>
+      record(host, false),
+    );
+    await tick();
+    fake.host.dispatchEvent(new Event("pagehide"));
+    expect(fake.storage.getItem(LIVE_KEY)).toBeNull();
+    // The record stays for the tab's next page.
+    expect(stored(fake).tab).toBe(TAB);
+    const back = new Event("pageshow") as Event & { persisted?: boolean };
+    Object.defineProperty(back, "persisted", { value: true });
+    fake.host.dispatchEvent(back);
+    await tick();
+    // The recorder file sets the mark again and goes on from a new snapshot (session.test.ts).
+    expect(recorder.calls).toContain("shown:true");
+  });
+
+  test("hiding the page (another tab in front) keeps the mark, so a duplicate of it is a new tab", async () => {
+    const { fake } = start({ consent: { analytics: true } }, (host) => record(host, false));
+    await tick();
+    Object.defineProperty(fake.host.document, "visibilityState", {
+      value: "hidden",
+      configurable: true,
+    });
+    fake.host.document.dispatchEvent(new Event("visibilitychange"));
+    expect(fake.storage.getItem(LIVE_KEY)).toBe("1");
+  });
+
+  test("withdrawn consent takes the record and the mark", async () => {
+    const { fake, mira } = start({ consent: { analytics: true } }, (host) => record(host, false));
+    await tick();
+    mira.consent({ analytics: false });
+    await tick();
+    expect(fake.storage.getItem(REPLAY_KEY)).toBeNull();
+    expect(fake.storage.getItem(LIVE_KEY)).toBeNull();
   });
 });

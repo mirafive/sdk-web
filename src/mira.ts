@@ -523,6 +523,9 @@ export function createMira<Events extends EventMap = EventMap>(
       if (host.document.visibilityState === "hidden") leave();
     });
     host.addEventListener("pagehide", leave);
+    host.addEventListener("pageshow", (event) =>
+      replay?.shown((event as PageTransitionEvent).persisted),
+    );
 
     const begin = () => {
       // Before the replayed calls, so a queued `page()` already counts its engaged time.
