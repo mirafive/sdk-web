@@ -79,6 +79,31 @@ describe("web addresses", () => {
   });
 });
 
+describe("page code in attributes", () => {
+  test("inline event handlers are left out of a snapshot and removed by a change", () => {
+    const snapshot: RecordedEvent = {
+      type: 2,
+      timestamp: 1,
+      data: {
+        node: element("button", { id: "b", onclick: "go('jana@example.com')", OnMouseOver: "x()" }),
+      },
+    };
+    expect(sanitize(snapshot, none).data.node.attributes).toEqual({ id: "b" });
+    const change: RecordedEvent = {
+      type: 3,
+      timestamp: 1,
+      data: { source: 0, adds: [], attributes: [{ id: 4, attributes: { onclick: "go('x')" } }] },
+    };
+    expect(sanitize(change, none).data.attributes[0].attributes).toEqual({ onclick: null });
+  });
+
+  test("an SVG link is a link", () => {
+    expect(cleanAttribute("xlink:href", "https://shop.example/x?token=abc")).toBe(
+      "https://shop.example/x",
+    );
+  });
+});
+
 describe("events", () => {
   test("the full snapshot, all the way down", () => {
     const deep = element("span", { title: "jana@example.com" }, [], 3);

@@ -75,7 +75,7 @@ const LINKS = new Set(["href", "action", "formaction", "ping", "cite"]);
 /** One attribute's value after the guard. */
 export function cleanAttribute(name: string, value: unknown): unknown {
   if (typeof value !== "string" || !value) return value;
-  if (LINKS.has(name)) {
+  if (LINKS.has(name) || name.endsWith("href")) {
     // A mail or phone link is an address and nothing else.
     if (/^\s*(mailto|tel|sms):/i.test(value)) return value.trim().replace(/:.*$/s, ":");
     return redact(withoutQuery(value));
@@ -84,12 +84,22 @@ export function cleanAttribute(name: string, value: unknown): unknown {
   return redact(value);
 }
 
+/** Inline event handlers (`onclick`): page code, which the player never runs, and may hold anything. */
+const isHandler = (name: string) => /^on/i.test(name);
+
 function cleanAttributes(
   attributes: Record<string, unknown>,
   id: number | undefined,
   nodeOf: NodeOf,
+  /** In a change, `null` removes an attribute; in a snapshot it is left out. */
+  change = false,
 ): void {
   for (const [name, value] of Object.entries(attributes)) {
+    if (isHandler(name)) {
+      if (change) attributes[name] = null;
+      else delete attributes[name];
+      continue;
+    }
     const cleaned = cleanAttribute(name, value);
     if (cleaned !== value) attributes[name] = cleaned;
   }
@@ -121,7 +131,7 @@ export function sanitize<T extends RecordedEvent>(event: T, nodeOf: NodeOf): T {
   else if (event.type === EVENT.incremental && data.source === MUTATION) {
     for (const add of data.adds ?? []) cleanTree(add.node, nodeOf);
     for (const change of data.attributes ?? []) {
-      if (change.attributes) cleanAttributes(change.attributes, change.id, nodeOf);
+      if (change.attributes) cleanAttributes(change.attributes, change.id, nodeOf, true);
     }
   }
   return event;

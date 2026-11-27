@@ -17,14 +17,15 @@
   stops the recording, never the page. Withdrawing analytics consent stops recording and asks the
   server to delete the session's recording. See the README, Session recording.
 - The tab keeps `mira_replay` in `sessionStorage` while a session is recorded (T1 only), so the
-  next page records from its first moment.
+  next page records from its first moment, and `mira_replay_seq` in `localStorage`, the session's
+  next chunk number, which the visitor's tabs share; withdrawn consent removes both.
 - The transport reads the body of a batch's `202`; until now it read only the status.
 
 ### Changed
 
-- The script tag grew from 9.9 to 10.7 kB gzip (10,122 to 11,005 bytes): the answer, the consent
+- The script tag grew from 9.9 to 10.7 kB gzip (10,122 to 11,021 bytes): the answer, the consent
   hook and the loader; the recorder itself is 29 kB gzip in its own file. The pixel file is
-  11.7 kB (11,785 to 11,954 bytes) and never records. CI's budget for the script tag is now 11 kB.
+  11.7 kB (11,785 to 11,968 bytes) and never records. CI's budget for the script tag is now 11 kB.
 - Requires `@mirafive/protocol` 2.5.0.
 
 ## 2.2.0 — 2026-11-23

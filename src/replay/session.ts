@@ -5,7 +5,15 @@
  */
 import { readReplayAnswer, REPLAY_LIMITS, type ReplayAnswer } from "@mirafive/protocol";
 
+import { KEYS } from "../storage";
 import { REPLAY_KEY, type ReplayEnvironment, type ReplaySession } from "./control";
+
+/**
+ * The next chunk number of a session, shared by the visitor's tabs (`localStorage`, T1 only): the
+ * server gives two tabs of one visit the same session, and a number used twice would overwrite a
+ * stored chunk.
+ */
+export const SEQ_KEY = KEYS.replaySeq;
 
 /** The tab's record of a recorded session: the decision, the next chunk number, when it was made. */
 export interface ReplayEntry {
@@ -113,6 +121,24 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
     storage((store) =>
       entry ? store.setItem(REPLAY_KEY, JSON.stringify(entry)) : store.removeItem(REPLAY_KEY),
     );
+  /** The next number the visitor's other tabs left for `id`, or 0. */
+  const shared = (id: string): number => {
+    try {
+      const value: unknown = JSON.parse(host.localStorage.getItem(SEQ_KEY) ?? "null");
+      const { s, n } = (value ?? {}) as { s?: unknown; n?: unknown };
+      return s === id && typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const share = (id: string | undefined, next: number) => {
+    try {
+      if (id) host.localStorage.setItem(SEQ_KEY, JSON.stringify({ s: id, n: next }));
+      else host.localStorage.removeItem(SEQ_KEY);
+    } catch {
+      // Without storage each tab counts on its own.
+    }
+  };
   const take = (next: ReplayEntry | undefined) => {
     entry = next;
     if (next) seen.add(next.answer.session_id);
@@ -140,8 +166,9 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
         ...environment,
         answer: own.answer,
         nextSeq: () => {
-          const seq = own.seq;
-          own.seq += 1;
+          const seq = Math.max(own.seq, shared(id));
+          own.seq = seq + 1;
+          share(id, own.seq);
           numbers.set(id, own.seq);
           if (entry === own) save();
           return seq;
@@ -206,6 +233,7 @@ export function replaySession(environment: ReplayEnvironment, start: StartRecord
       stop(false);
       for (const handle of closing.splice(0)) handle.stop(false);
       take(undefined);
+      share(undefined, 0);
     },
     reset() {
       // Logout: what was recorded leaves under the old ids, and the session ends here, so nothing

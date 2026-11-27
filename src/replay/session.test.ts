@@ -144,6 +144,23 @@ describe("the next page of the tab", () => {
     expect(next.started[0]!.nextSeq()).toBe(2);
   });
 
+  test("another tab of the same visit never reuses a chunk number", () => {
+    const first = setup();
+    first.session.consent(true);
+    first.session.answer(body(answerOf(A)));
+    expect([first.started[0]!.nextSeq(), first.started[0]!.nextSeq()]).toEqual([0, 1]);
+
+    // A second tab: its own sessionStorage, the visitor's localStorage, the same server session.
+    const tab = fakeHost();
+    const shared = first.fake.storage;
+    Object.defineProperty(tab.host, "localStorage", { get: () => shared });
+    const second = setup({ fake: tab });
+    second.session.consent(true);
+    second.session.answer(body(answerOf(A)));
+    expect(second.started[0]!.nextSeq()).toBe(2);
+    expect(first.started[0]!.nextSeq()).toBe(3);
+  });
+
   test("a record older than a decision lives, or a malformed one, is ignored", () => {
     const now = Date.now();
     const answer = answerOf(A);

@@ -12,6 +12,8 @@ export const KEYS = {
   userId: "mira_uid",
   groupId: "mira_gid",
   queue: "mira_q",
+  /** The next chunk number of a recorded session, shared by the visitor's tabs (replay/session.ts). */
+  replaySeq: "mira_replay_seq",
 } as const;
 
 type Key = (typeof KEYS)[keyof typeof KEYS];
