@@ -66,6 +66,8 @@ export const replayControl =
     let last: unknown;
     /** The session of an answer or the tab's record, for a withdrawal before the recorder is there. */
     let session: string | undefined;
+    /** Sessions a `reset()` ended before the recorder was there: a withdrawal names them too. */
+    const ended = new Set<string>();
 
     const start = () =>
       (loading ??= load()
@@ -123,8 +125,9 @@ export const replayControl =
         }
         // Withdrawn: the recorder stops and drops its buffer; the tab's record goes; the server
         // deletes what it stored.
-        const ids = new Set(full?.sessions);
+        const ids = new Set([...ended, ...(full?.sessions ?? [])]);
         if (session) ids.add(session);
+        ended.clear();
         full?.consent(false);
         session = undefined;
         last = undefined;
@@ -135,6 +138,7 @@ export const replayControl =
         if (!granted) return;
         if (full) return full.reset();
         // Not loaded yet: the session ends here all the same.
+        if (session) ended.add(session);
         session = undefined;
         last = undefined;
         forget();

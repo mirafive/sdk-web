@@ -58,27 +58,29 @@ function extensionSheet(sheet: CSSStyleSheet | null | undefined, depth = 0): boo
 }
 
 /**
- * A web address without its query or fragment, which can carry tokens and what a person typed
- * (`?email=…`, a reset link). Anything else (a fragment link, a relative path) stays as it is.
+ * An address without its query or fragment, which can carry tokens and what a person typed
+ * (`?email=…`, a reset link), in whatever form it is written: absolute, relative, with spaces. A
+ * link to a place on the page (`#reviews`) stays as it is. `src` and `poster` are not cut: the
+ * player loads them from the site.
  */
 export function withoutQuery(value: string): string {
-  if (!/^https?:/i.test(value)) return value;
-  try {
-    const url = new URL(value);
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return value;
-  }
+  const trimmed = value.trim();
+  if (trimmed.startsWith("#")) return trimmed;
+  return trimmed.replace(/[?#].*$/s, "");
 }
+
+/** Attributes that hold an address to follow, not to load. */
+const LINKS = new Set(["href", "action", "formaction", "ping", "cite"]);
 
 /** One attribute's value after the guard. */
 export function cleanAttribute(name: string, value: unknown): unknown {
   if (typeof value !== "string" || !value) return value;
-  if (name === "action") return redact(withoutQuery(value));
+  if (LINKS.has(name)) {
+    // A mail or phone link is an address and nothing else.
+    if (/^\s*(mailto|tel|sms):/i.test(value)) return value.trim().replace(/:.*$/s, ":");
+    return redact(withoutQuery(value));
+  }
   if (!isText(name)) return value;
-  // A mail or phone link is an address and nothing else.
-  if (name === "href" && /^\s*(mailto|tel|sms):/i.test(value)) return value.replace(/:.*$/s, ":");
-  if (name === "href") return redact(withoutQuery(value));
   return redact(value);
 }
 

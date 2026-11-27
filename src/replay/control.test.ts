@@ -198,6 +198,25 @@ describe("consent withdrawn during a visit", () => {
     expect(withdrawals(fake)).toHaveLength(1);
   });
 
+  test("a session that a logout ended before the recorder loaded is withdrawn too", async () => {
+    const fake = fakeHost();
+    fake.answer = recordedAnswer;
+    const mira = createMira(
+      { key: KEY, host: HOST, autocapture: false, consent: { analytics: true } },
+      fake.host,
+      undefined,
+      replayControl(() => new Promise(() => {})),
+    );
+    mira.track("one");
+    await mira.flush();
+    mira.reset();
+    mira.consent({ analytics: false });
+    await tick();
+    expect(withdrawals(fake).map((request) => request.url)).toEqual([
+      `${HOST}/v1/replay/withdraw?key=${KEY}&session=${SESSION}`,
+    ]);
+  });
+
   test("a 429 or 503 is sent once more, then never again", async () => {
     const { fake, mira } = start({ consent: { analytics: true } });
     mira.track("one");

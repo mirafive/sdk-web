@@ -38,9 +38,7 @@ describe("attributes", () => {
   test("a mail or phone link keeps only its scheme", () => {
     expect(cleanAttribute("href", "mailto:jana@example.com?subject=Hi")).toBe("mailto:");
     expect(cleanAttribute("href", "tel:+49301234567")).toBe("tel:");
-    expect(cleanAttribute("href", "/orders?email=jana@example.com")).toBe(
-      "/orders?email=****************",
-    );
+    expect(cleanAttribute("href", "/orders?email=jana@example.com")).toBe("/orders");
     expect(cleanAttribute("href", "/products/shirt")).toBe("/products/shirt");
   });
 
@@ -60,6 +58,15 @@ describe("web addresses", () => {
       "https://shop.example/login",
     );
     expect(cleanAttribute("href", "#reviews")).toBe("#reviews");
+    expect(cleanAttribute("href", " //cdn.example/x?sig=abc")).toBe("//cdn.example/x");
+    expect(cleanAttribute("formaction", "save?draft=1")).toBe("save");
+    expect(cleanAttribute("ping", "https://track.example/p?u=jana")).toBe(
+      "https://track.example/p",
+    );
+    // Loaded by the player from the site: left as they are.
+    expect(cleanAttribute("src", "https://cdn.example/i.png?sig=abc")).toBe(
+      "https://cdn.example/i.png?sig=abc",
+    );
   });
 
   test("so does the page's address in a meta event", () => {

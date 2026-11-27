@@ -22,7 +22,7 @@
 
 ### Changed
 
-- The script tag grew from 9.9 to 10.7 kB gzip (10,122 to 10,996 bytes): the answer, the consent
+- The script tag grew from 9.9 to 10.7 kB gzip (10,122 to 11,005 bytes): the answer, the consent
   hook and the loader; the recorder itself is 29 kB gzip in its own file. The pixel file is
   11.7 kB (11,785 to 11,954 bytes) and never records. CI's budget for the script tag is now 11 kB.
 - Requires `@mirafive/protocol` 2.5.0.
