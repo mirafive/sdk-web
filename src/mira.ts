@@ -27,6 +27,7 @@ import {
 } from "./consent/types";
 import { buildContext, readClientHints, type ClientHints, type PageInfo } from "./context";
 import { shopifyStorefront } from "./shopify/storefront";
+import type { ReplayControl, ReplayFactory } from "./replay/control";
 import { createStore, KEYS } from "./storage";
 import { Transport, type QueuedEvent } from "./transport";
 
@@ -159,11 +160,17 @@ export function createMira<Events extends EventMap = EventMap>(
   host: Host = globalThis as unknown as Host,
   /** The time an event gets. Pixel mode passes the time Shopify gave the event. */
   now: () => Date = () => new Date(),
+  /**
+   * Session recording: the script tag and the npm entry pass how they load the recorder file;
+   * pixel mode passes none, so it never records.
+   */
+  replayFactory?: ReplayFactory,
 ): Mira<Events> {
   let started = false;
   let debug = false;
   const early: (() => void)[] = [];
   let transport: Transport | undefined;
+  let replay: ReplayControl | undefined;
 
   let status: ConsentStatus = UNKNOWN;
   let anonymousId: string | undefined;
@@ -343,6 +350,8 @@ export function createMira<Events extends EventMap = EventMap>(
         downgrade();
         forget = true;
       }
+      // Recording follows analytics consent: loaded at T1, stopped and withdrawn below it.
+      if (wasConsented !== analytics()) replay?.consent(analytics());
     }
     if (forget) announceId();
     // After the tier switch, so a waiting first pageview carries the new anonymous id.
@@ -468,15 +477,32 @@ export function createMira<Events extends EventMap = EventMap>(
     wireWhenShopifyComes();
     adapters = settings.adapters ?? defaultAdapters;
     const origin = trimHost(settings.host ?? DEFAULT_HOST);
+    const send = host.fetch.bind(host);
+    const beacon = host.navigator.sendBeacon
+      ? (url: string, body: string | Blob) => host.navigator.sendBeacon(url, body)
+      : undefined;
 
+    replay = replayFactory?.({
+      host,
+      ingest: origin,
+      key: settings.key,
+      fetch: send,
+      beacon,
+      query: () => ({
+        consent_analytics: status.analytics,
+        consent_marketing: status.marketing,
+        ...(analytics() && anonymousId ? { anonymous_id: anonymousId } : {}),
+        ...(analytics() && userId ? { user_id: userId } : {}),
+      }),
+      warn,
+    });
     transport = new Transport({
       host: origin,
       key: settings.key,
-      fetch: host.fetch.bind(host),
-      beacon: host.navigator.sendBeacon
-        ? (url, body) => host.navigator.sendBeacon(url, body)
-        : undefined,
+      fetch: send,
+      beacon,
       persist,
+      onAnswer: replay && ((body) => replay?.answer(body)),
       onError: (message) => warn(message),
     });
     started = true;
@@ -491,6 +517,7 @@ export function createMira<Events extends EventMap = EventMap>(
       reportEngagement(true);
       transport?.beacon();
       persistNow();
+      replay?.hide();
     };
     host.document.addEventListener("visibilitychange", () => {
       if (host.document.visibilityState === "hidden") leave();
@@ -628,7 +655,9 @@ export function createMira<Events extends EventMap = EventMap>(
       location = { latitude: twoDecimals(latitude), longitude: twoDecimals(longitude) };
     }),
     reset: guard("reset", () => {
-      // Logout on a shared device: the next person must not be linked to the previous one.
+      // Logout on a shared device: the next person must not be linked to the previous one. What is
+      // recorded so far leaves under the previous ids.
+      replay?.reset();
       userId = undefined;
       groupId = undefined;
       pendingIdentify = undefined;

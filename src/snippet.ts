@@ -22,6 +22,8 @@
  */
 import type { ConsentChoice, Host } from "./consent/types";
 import { createMira, type Mira, type MiraOptions } from "./mira";
+import { replayControl } from "./replay/control";
+import { scriptLoader } from "./replay/script-loader";
 
 type Command =
   | "init"
@@ -78,8 +80,16 @@ function boot() {
   if ((host.mira as { loaded?: boolean } | undefined)?.loaded) return;
 
   const stubQueue = Array.from((host.mira as Stub | undefined)?.q ?? []);
-  // The page's window, named so a test can stand in for it.
-  const instance: Mira = createMira(undefined, window as unknown as Host);
+  // Only while this script runs for the first time does the page say where it came from.
+  const script = document.currentScript as HTMLScriptElement | null;
+  // The page's window, named so a test can stand in for it. A recorded session loads the recorder
+  // file of this release from beside this script.
+  const instance: Mira = createMira(
+    undefined,
+    window as unknown as Host,
+    undefined,
+    replayControl(scriptLoader(script?.src, document)),
+  );
 
   const run = (command: Command, args: unknown[]): unknown => {
     const call = instance[command] as ((...values: unknown[]) => unknown) | undefined;
@@ -99,8 +109,7 @@ function boot() {
     if (command !== "init") run(command as Command, args);
   }
   const queuedInit = stubQueue.find((entry) => entry[0] === "init")?.[1] as MiraOptions | undefined;
-  const options =
-    queuedInit ?? optionsFromScript(document.currentScript as HTMLScriptElement | null);
+  const options = queuedInit ?? optionsFromScript(script);
   if (options) {
     instance.init(options);
   }

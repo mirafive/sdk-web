@@ -7,8 +7,11 @@
  * mira.track("signup_started", { plan: "pro" });
  * ```
  */
+import type { Host } from "./consent/types";
+import { createMira as createCore, type EventMap, type Mira, type MiraOptions } from "./mira";
+import { replayControl } from "./replay/control";
+
 export {
-  createMira,
   type AutocaptureOptions,
   type EventMap,
   type SurveyInput,
@@ -37,3 +40,23 @@ export { CART_ATTRIBUTE, shopifyStorefront, VISITOR_COOKIE } from "./shopify/sto
 export { eventIdFor, uuidv7 } from "@mirafive/protocol";
 export { createNoopMira } from "./noop";
 export { VERSION } from "./version";
+
+/**
+ * Creates an SDK instance. Pass options to start it at once, or call `init` later; calls made
+ * before `init` are kept and replayed. `host` is the window, injectable for tests.
+ *
+ * When the server records the visitor's session and analytics consent is given, the recorder is
+ * loaded with a dynamic `import()`, which bundlers split into a chunk of its own: it is not in your
+ * main bundle and is never fetched otherwise.
+ */
+export function createMira<Events extends EventMap = EventMap>(
+  options?: MiraOptions,
+  host?: Host,
+): Mira<Events> {
+  return createCore<Events>(
+    options,
+    host,
+    undefined,
+    replayControl(() => import("./replay/recorder").then((module) => module.createReplay)),
+  );
+}
