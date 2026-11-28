@@ -10,6 +10,7 @@
 import type { Host } from "./consent/types";
 import { createMira as createCore, type EventMap, type Mira, type MiraOptions } from "./mira";
 import { replayControl } from "./replay/control";
+import { signalsControl } from "./signals/control";
 
 export {
   type AutocaptureOptions,
@@ -47,7 +48,8 @@ export { VERSION } from "./version";
  *
  * When the server records the visitor's session and analytics consent is given, the recorder is
  * loaded with a dynamic `import()`, which bundlers split into a chunk of its own: it is not in your
- * main bundle and is never fetched otherwise.
+ * main bundle and is never fetched otherwise. The behavior signals detector loads the same way,
+ * when the project detects signals.
  */
 export function createMira<Events extends EventMap = EventMap>(
   options?: MiraOptions,
@@ -58,5 +60,6 @@ export function createMira<Events extends EventMap = EventMap>(
     host,
     undefined,
     replayControl(() => import("./replay/recorder").then((module) => module.createReplay)),
+    signalsControl(() => import("./signals/detector").then((module) => module.createSignals)),
   );
 }

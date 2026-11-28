@@ -6,7 +6,8 @@ captures pageviews (also in single-page apps), engagement, outbound clicks, down
 submits, and never throws into your page. About 11 kB gzip with every consent adapter; no
 dependencies besides `@mirafive/protocol`. For a project that records sessions, a separate
 recorder file (about 29 kB gzip) loads only when the server records the visit and the visitor
-allows analytics.
+allows analytics; for a project that detects behavior signals, a separate detector file (about
+7 kB gzip) loads when the server says so.
 
 Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),
 [`@mirafive/next`](https://github.com/mirafive/sdk-next),
@@ -180,9 +181,34 @@ the time counts for the visit the page view belongs to, also when a tab is shown
 later. It is the id of an event the page already sent, not an identifier of the person, and it is
 left out once consent changed or `reset()` was called on that page.
 
+### Behavior signals
+
+Where visitors struggle, for a project that has them on (on by default; the project's Settings,
+Traffic). The first batch's answer carries the definitions' numbers (`signals`,
+`@mirafive/protocol` 2.6.0); only then does the SDK load its detector, a file of its own:
+`mira-signals@<version>.js` beside the script tag, pinned by an integrity hash in `mira.js`, or a
+chunk that `createMira` imports dynamically. `autocapture: false` (or `data-autocapture="false"`)
+turns it off on the page; `autocapture: { signals: false }` turns off this part alone.
+
+| Event           | When (the server's numbers, these are the defaults)                                                                                                                                       | Properties                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `$rage_click`   | 4 or more clicks within 30 px, each within 600 ms of the last, of which the page answered at most one                                                                                     | `selector`, `label`, `clicks`                                                              |
+| `$dead_click`   | A click on something that looks clickable, then nothing for 1 s: no change in the page, no navigation, no request, no focus, no scrolling. A link that leaves the page by itself never is | `selector`, `label`                                                                        |
+| `$form_abandon` | A form got input and the page was left (or the SPA route changed) without a submit or a request after the last input                                                                      | `form`, `form_id`, `form_name`, `field` (name or label, **never a value**), `fields`, `ms` |
+| `$error`        | An uncaught exception, an unhandled rejection, or a request to your own site answered 400 or above; never an extension's error, an abort or another site's request                        | `kind`, `message`, `source` or `url` (origin and path), `method`, `status`                 |
+| `$slow_page`    | LCP over 4 s, INP over 500 ms or CLS over 0.25, once per page view                                                                                                                        | `lcp_ms`, `inp_ms`, `cls`, `poor`                                                          |
+
+Signals describe the page and read nothing from the device, so they are sent at every tier (T0
+too) and store nothing. A label is the element's visible text, `aria-label`, `title` or `alt`,
+through the PII guard; on pages the project marks sensitive, in strict masking and inside
+`data-mira-mask` or `data-mira-block` no label or message is sent. Never in the page's way:
+passive listeners, the work done after a click rather than during it, `fetch` and
+`XMLHttpRequest` wrapped as a side branch, every error swallowed, and at most 10 of a kind and 25
+in all per page view, 50 per document. The server derives quick backs itself.
+
 ### Events that start no visit
 
-A visit needs an interaction. `$engagement` never starts one. If your own code sends an event
+A visit needs an interaction. `$engagement` and the behavior signals never start one. If your own code sends an event
 without the person doing anything (a timer, a video that keeps playing in a background tab), mark
 it, and it will not open a visit either:
 

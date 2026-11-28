@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.4.0 — unreleased
+
+### Added
+
+- Behavior signals, for projects that detect them (on by default on the server): rage clicks,
+  dead clicks, abandoned forms, errors and slow pages, sent as `$rage_click`, `$dead_click`,
+  `$form_abandon`, `$error` and `$slow_page` events of every visit, recorded or not. The server's
+  answer to a batch carries their numbers (`signals`, `@mirafive/protocol` 2.6.0); only then does
+  the SDK load its detector, a separate file: `mira-signals@<version>.js` beside the script tag
+  (pinned by an integrity hash in `mira.js`) or a chunk `createMira` imports dynamically. They are
+  T0: nothing is read from or written to the device. Never a field's value, never a request's
+  query, body or headers; labels and messages pass the PII guard and are left out on masked
+  pages. `autocapture: { signals: false }` turns them off on a page. See the README, Behavior
+  signals.
+
+### Changed
+
+- The script tag's loader of sibling files is shared by the recorder and the signals detector.
+  `mira.js` is 11.1 kB gzip (11,390 bytes, 230 more than 2.3.0: the loader and the detector's
+  integrity hash); the CI budget is 11,520 bytes.
+
 ## 2.3.0 — 2026-11-27
 
 ### Added
