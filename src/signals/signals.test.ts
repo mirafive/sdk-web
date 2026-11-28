@@ -128,6 +128,14 @@ describe("what a signal says about an element", () => {
     ).toEqual({ name: "Your street", label: true });
   });
 
+  test("a field the page masks is never named by its label", () => {
+    const masked = el("input", { id: "" }, { matches: ["[data-mira-mask]"] });
+    expect(fieldOf(masked, () => el("label", {}, { text: "Diagnosis" }))).toEqual({
+      name: "",
+      label: false,
+    });
+  });
+
   test("a disabled control does not look clickable", () => {
     const disabled = el("button", {}, { matches: ["button", ":disabled"] });
     expect(clickableOf(disabled, () => "pointer")).toBeUndefined();

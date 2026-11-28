@@ -129,6 +129,8 @@ export function fieldOf(
     redactPii(text.slice(0, 120)).text.slice(0, SIGNAL_LIMITS.textLength);
   const name = field.getAttribute("name");
   if (name) return { name: clean(name), label: false };
+  // A field the page masks gives no text a visitor saw: only its id, if any.
+  if (field.closest(MASKED)) return { name: clean(field.id ?? ""), label: false };
   const label =
     collapse(field.getAttribute("aria-label")) ||
     collapse((field.id ? labelFor(field.id) : null)?.textContent) ||

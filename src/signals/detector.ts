@@ -14,6 +14,7 @@
 import {
   matchesAnyPage,
   readSignalsAnswer,
+  redactPii,
   SIGNAL_LIMITS,
   SIGNAL_RULES,
   type SignalEvent,
@@ -275,8 +276,8 @@ export const createSignals: CreateSignals = (environment: SignalsEnvironment) =>
       const hide = masked() && entry.field.label;
       emit("$form_abandon", {
         form: selectorOf(entry.form),
-        form_id: entry.form.getAttribute("id") ?? "",
-        form_name: entry.form.getAttribute("name") ?? "",
+        form_id: redactPii(entry.form.getAttribute("id") ?? "", () => "").text.slice(0, 120),
+        form_name: redactPii(entry.form.getAttribute("name") ?? "", () => "").text.slice(0, 120),
         field: hide ? "" : entry.field.name,
         fields: entry.fields.size,
         ms: Math.max(0, Date.now() - entry.first),
