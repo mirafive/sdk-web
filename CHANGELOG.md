@@ -18,7 +18,7 @@
 ### Changed
 
 - The script tag's loader of sibling files is shared by the recorder and the signals detector.
-  `mira.js` is 11.1 kB gzip (11,389 bytes, 229 more than 2.3.0: the loader and the detector's
+  `mira.js` is 11.1 kB gzip (11,390 bytes, 230 more than 2.3.0: the loader and the detector's
   integrity hash); the CI budget is 11,520 bytes.
 
 ## 2.3.0 — 2026-11-27
