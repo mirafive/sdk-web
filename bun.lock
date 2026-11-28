@@ -5,7 +5,7 @@
     "": {
       "name": "@mirafive/web",
       "dependencies": {
-        "@mirafive/protocol": "^2.4.0",
+        "@mirafive/protocol": "^2.5.0",
       },
       "devDependencies": {
         "@rrweb/record": "2.2.2",
@@ -18,7 +18,7 @@
     },
   },
   "packages": {
-    "@mirafive/protocol": ["@mirafive/protocol@2.4.0", "", { "bin": { "mirafive-validate": "dist/cli.js" } }, "sha512-v4vmvW2xh3qXjLSpy/Utuhatr0uW53CKNOP/2aEMiK571Ib0szuPiL2HlM7t7zyjLDSXi8q1Fj0ONSQQFYRxPQ=="],
+    "@mirafive/protocol": ["@mirafive/protocol@2.5.0", "", { "bin": { "mirafive-validate": "dist/cli.js" } }, "sha512-OO1mKOjV7o+xGauzIrTqZshIBzPzRAPGI34CBnvUZeNnXnkjQpAEITXQDCGY96E+LB8jezWRLRawWJ0SI/S/yQ=="],
 
     "@oxfmt/binding-android-arm-eabi": ["@oxfmt/binding-android-arm-eabi@0.78.0", "", { "os": "android", "cpu": "arm" }, "sha512-1x9NPGQG5WMOOT8spRP4hPbeqwB/P9ayxFo4EUDSle6mLmtYRqE6suXgHr93/S2nnszy77LlIa8klkKdWtHbMw=="],
 
