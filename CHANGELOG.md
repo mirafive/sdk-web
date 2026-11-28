@@ -1,6 +1,33 @@
 # Changelog
 
-## 2.4.0 — unreleased
+## 2.5.0 — 2026-11-28
+
+### Changed
+
+- The script tag loads only what a page needs. `mira.js` keeps how each consent banner is
+  detected; the code that follows a banner is `mira-consent@<version>.js`, loaded once a banner is
+  detected, and Shopify mode (Shopify's consent, the cookie and the cart attribute) is
+  `mira-shopify@<version>.js`, loaded only with `data-consent="shopify"`. Both sit beside the
+  script like the recorder, are pinned by integrity hashes in `mira.js` and cached for a year. A
+  page without a known banner and without Shopify mode loads neither. A first-party proxy forwards
+  them like the script; a self-hosted `mira.js` without them stays at T0. See the README, Script
+  files.
+- The script files are minified by terser (Bun still bundles them): about 6% smaller, gzip and
+  brotli alike.
+- `mira.js` is 8.5 kB gzip (8,525 bytes, was 11,390): 20.0 kB minified, was 29.3 kB. On a Shopify
+  storefront `mira.js` and `mira-shopify` together are 10.2 kB gzip, cached for a year after the
+  first page. The CI budget is 9,216 bytes.
+- Pixel mode (`mira-shopify-pixel.js`) no longer carries the consent banners' code, Shopify's
+  storefront code or autocapture: 7.4 kB gzip, was 11.7 kB.
+- The transport is a function instead of a class.
+
+### Fixed
+
+- The first automatic pageview keeps waiting (up to 1 s) when a banner or Shopify reports
+  "unknown" while nothing has changed yet: such a report no longer sends it at T0 just before the
+  answer arrives.
+
+## 2.4.0 — 2026-11-28
 
 ### Added
 
@@ -21,7 +48,7 @@
   `mira.js` is 11.1 kB gzip (11,390 bytes, 230 more than 2.3.0: the loader and the detector's
   integrity hash); the CI budget is 11,520 bytes.
 
-## 2.3.0 — 2026-11-27
+## 2.3.0 — 2026-11-28
 
 ### Added
 

@@ -81,11 +81,14 @@ export function fromV2(list: V2Service[]): ConsentStatus {
   });
 }
 
+/** Usercentrics is on the page: its v3 or v2 global, or its script. */
+export const detectUsercentrics = (host: Host) =>
+  Boolean(host.__ucCmp || host.UC_UI) ||
+  Boolean(host.document.querySelector("script#usercentrics-cmp, script[src*='usercentrics.eu']"));
+
 export const usercentrics: ConsentAdapter = {
   name: "usercentrics",
-  detect: (host) =>
-    Boolean(host.__ucCmp || host.UC_UI) ||
-    Boolean(host.document.querySelector("script#usercentrics-cmp, script[src*='usercentrics.eu']")),
+  detect: detectUsercentrics,
   subscribe(host: Host, emit) {
     const readV3 = () => {
       const cmp = host.__ucCmp as { getConsentDetails?: () => Promise<V3Details> } | undefined;

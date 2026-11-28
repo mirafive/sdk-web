@@ -45,8 +45,15 @@ export class RecordingStorage implements Storage {
   }
 }
 
+/** A script element the page appended: one of the SDK's sibling files. */
+export type FakeScript = EventTarget & { src: string; crossOrigin?: string; integrity?: string };
+
 export interface FakeHost {
   host: Host;
+  /** Every script the SDK appended, in order. */
+  scripts: FakeScript[];
+  /** Answers an appended script; without it a script never loads, as on a network that blocks it. */
+  serve?: (script: FakeScript) => void | Promise<void>;
   storage: RecordingStorage;
   /** How often anything read `window.localStorage`, `sessionStorage` or `document.cookie`. */
   storageReads: () => number;
@@ -108,6 +115,7 @@ export function fakeHost(
   const beacons: SentRequest[] = [];
   const responses: (number | "network")[] = [];
   let hintCalls = 0;
+  const scripts: FakeScript[] = [];
   const location = { href: options.url ?? "https://shop.example/landing?utm_source=news" };
 
   const document = extend(new EventTarget(), {
@@ -118,6 +126,13 @@ export function fakeHost(
     documentElement: { scrollHeight: 2880 },
     prerendering: false,
     querySelector: () => null,
+    createElement: () => new EventTarget() as FakeScript,
+    head: {
+      append(script: FakeScript) {
+        scripts.push(script);
+        void fake.serve?.(script);
+      },
+    },
     get cookie() {
       reads += 1;
       return "";
@@ -186,6 +201,7 @@ export function fakeHost(
 
   const fake: FakeHost = {
     host,
+    scripts,
     storage,
     storageReads: () => reads + storage.accesses,
     requests,

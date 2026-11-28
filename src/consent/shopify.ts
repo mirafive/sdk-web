@@ -1,6 +1,6 @@
 import type { ConsentState } from "@mirafive/protocol";
 
-import { autoConsent } from "./auto";
+import type { followBanners } from "./follow";
 import type { ConsentAdapter, ConsentStatus, Host } from "./types";
 
 /**
@@ -155,11 +155,13 @@ export function followShopify(
   host: Host,
   emit: (status: ConsentStatus) => void,
   adapters: readonly ConsentAdapter[],
+  /** The core's banner follower, passed in so Shopify's file of the script tag does not carry its own. */
+  follow: typeof followBanners,
 ): () => void {
   let bannerFound = false;
   let answered = false;
   let stopShopify = () => {};
-  const stopBanners = autoConsent(
+  const stopBanners = follow(
     host,
     (status) => emit(status),
     banners(adapters),

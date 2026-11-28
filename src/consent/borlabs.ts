@@ -1,4 +1,4 @@
-import { listen, type ConsentAdapter } from "./types";
+import { listen, type ConsentAdapter, type Host } from "./types";
 
 /**
  * Borlabs Cookie 3 for WordPress (verified against https://borlabs.io/docs/javascript-api-v3/):
@@ -19,9 +19,13 @@ interface Borlabs {
   };
 }
 
+/** Borlabs Cookie is on the page: its global with the consents. */
+export const detectBorlabs = (host: Host) =>
+  Boolean((host.BorlabsCookie as Borlabs | undefined)?.Consents);
+
 export const borlabs: ConsentAdapter = {
   name: "borlabs",
-  detect: (host) => Boolean((host.BorlabsCookie as Borlabs | undefined)?.Consents),
+  detect: detectBorlabs,
   subscribe(host, emit) {
     let saved = false;
     const read = (event?: Event) => {

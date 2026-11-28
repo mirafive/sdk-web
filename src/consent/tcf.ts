@@ -1,4 +1,4 @@
-import type { ConsentAdapter, ConsentStatus } from "./types";
+import type { ConsentAdapter, ConsentStatus, Host } from "./types";
 
 /**
  * Any IAB TCF v2.2 CMP, through the standard `__tcfapi` (`addEventListener`, `eventStatus`,
@@ -54,9 +54,12 @@ export function fromTcData(data: TcData): ConsentStatus | undefined {
   return fromPurposes(data.purpose?.consents ?? {});
 }
 
+/** A TCF v2.2 CMP is on the page: its API (or the stub that queues calls for it). */
+export const detectTcf = (host: Host) => typeof host.__tcfapi === "function";
+
 export const tcf: ConsentAdapter = {
   name: "tcf",
-  detect: (host) => typeof host.__tcfapi === "function",
+  detect: detectTcf,
   subscribe(host, emit) {
     const api = host.__tcfapi as TcfApi;
     let listenerId: number | undefined;

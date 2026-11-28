@@ -1,4 +1,4 @@
-import type { EventMap, Mira } from "./mira";
+import type { EventMap, Mira } from "./core";
 
 const nothing = () => {};
 

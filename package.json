@@ -1,7 +1,7 @@
 {
   "name": "@mirafive/web",
-  "version": "2.4.0",
-  "description": "MIRA FIVE browser SDK: consent-aware analytics and revenue attribution. Follows your consent banner, captures pageviews and engagement, about 11 kB gzip; session recording in a separate file. No dependencies beyond @mirafive/protocol.",
+  "version": "2.5.0",
+  "description": "MIRA FIVE browser SDK: consent-aware analytics and revenue attribution. Follows your consent banner, captures pageviews and engagement, about 8.5 kB gzip; banner code, Shopify mode and session recording load only where a page needs them. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",
     "attribution",
@@ -36,6 +36,8 @@
       "default": "./dist/index.js"
     },
     "./mira.js": "./dist/mira.js",
+    "./mira-consent.js": "./dist/mira-consent.js",
+    "./mira-shopify.js": "./dist/mira-shopify.js",
     "./mira-shopify-pixel.js": "./dist/mira-shopify-pixel.js",
     "./mira-recorder.js": "./dist/mira-recorder.js",
     "./mira-signals.js": "./dist/mira-signals.js",
@@ -63,6 +65,7 @@
     "oxfmt": "^0.78.0",
     "oxlint": "^1.93.0",
     "oxlint-tsgolint": "^7.0.2006",
+    "terser": "^5.51.4",
     "typescript": "^7.0.2"
   },
   "packageManager": "bun@1.4.4"

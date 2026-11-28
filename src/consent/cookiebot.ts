@@ -1,4 +1,4 @@
-import { listen, type ConsentAdapter } from "./types";
+import { listen, type ConsentAdapter, type Host } from "./types";
 
 /**
  * Cookiebot (verified against https://www.cookiebot.com/en/developer/): the global `Cookiebot`
@@ -14,11 +14,14 @@ interface Cookiebot {
   consent?: { statistics?: boolean; marketing?: boolean };
 }
 
+/** Cookiebot is on the page: its global or its script. */
+export const detectCookiebot = (host: Host) =>
+  Boolean(host.Cookiebot) ||
+  Boolean(host.document.querySelector("script[src*='consent.cookiebot.']"));
+
 export const cookiebot: ConsentAdapter = {
   name: "cookiebot",
-  detect: (host) =>
-    Boolean(host.Cookiebot) ||
-    Boolean(host.document.querySelector("script[src*='consent.cookiebot.']")),
+  detect: detectCookiebot,
   subscribe(host, emit) {
     const read = () => {
       const bot = host.Cookiebot as Cookiebot | undefined;

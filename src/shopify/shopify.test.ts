@@ -6,6 +6,8 @@ import { validateEvent } from "@mirafive/protocol";
 import { fromCustomerPrivacy, shopify } from "../consent/shopify";
 import { createMira } from "../mira";
 import { fakeHost, tick } from "../test/fake-host";
+import { loadedSiblings, serveSiblings } from "../test/siblings";
+import { VERSION } from "../version";
 import { eventFeed } from "./event-feed";
 import {
   eventTime,
@@ -1638,6 +1640,7 @@ describe("script tag boot", () => {
     withKey = true,
   ) {
     const fake = fakeHost({ extra });
+    serveSiblings(fake);
     Object.defineProperty(fake.host.document, "cookie", {
       get: () => "",
       set: (value: string) => {
@@ -1702,6 +1705,48 @@ describe("script tag boot", () => {
     const fake = await boot({}, writes, "granted");
     expect(fake.storage.data.get("mira_aid")).toBeDefined();
     expect(writes).toEqual([]);
+    forget();
+  });
+
+  test("a storefront loads Shopify's file of the release, and no consent file without a banner", async () => {
+    const fake = await boot(
+      { Shopify: { routes: { root: "/" }, customerPrivacy: privacyOf(true, true) } },
+      [],
+    );
+    expect(loadedSiblings(fake)).toEqual(["shopify"]);
+    expect(fake.scripts[0]?.src).toBe(`${HOST}/sdk/mira-shopify@${VERSION}.js`);
+    expect(fake.scripts[0]?.crossOrigin).toBe("anonymous");
+    forget();
+  });
+
+  test("a page without a banner or Shopify mode loads no file beside the script", async () => {
+    const fake = await boot({}, [], "auto");
+    await tick(300);
+    expect(fake.scripts).toEqual([]);
+    forget();
+  });
+
+  test("a detected banner loads the consent file once and is followed", async () => {
+    const fake = await boot({ dataLayer: granted() }, [], "auto");
+    await tick(300);
+    expect(loadedSiblings(fake)).toEqual(["consent"]);
+    expect(fake.storage.data.get("mira_aid")).toBeDefined();
+    forget();
+  });
+
+  test("a banner on a storefront loads both files, and the banner decides", async () => {
+    const bot = { hasResponse: true, consent: { statistics: false, marketing: false } };
+    const fake = await boot(
+      {
+        Cookiebot: bot,
+        Shopify: { routes: { root: "/" }, customerPrivacy: privacyOf(true, true) },
+      },
+      [],
+    );
+    await tick(300);
+    expect(new Set(loadedSiblings(fake))).toEqual(new Set(["consent", "shopify"]));
+    expect(fake.storage.data.size).toBe(0);
+    expect(fake.events().every((event) => event.consent.analytics === "denied")).toBe(true);
     forget();
   });
 });
