@@ -18,12 +18,18 @@
  *   banner that appears) and, with analytics consent, writes the visitor's id to a cookie and the
  *   cart attribute `_mira_aid`. Without it a Shopify page behaves like any other.
  * - `data-autocapture="false"`: turn off all autocapture. `data-spa`, `data-engagement`,
- *   `data-outbound`, `data-downloads`, `data-forms` set to `"false"` turn off one part.
+ *   `data-outbound`, `data-downloads`, `data-forms` set to `"false"` turn off one part. Behavior
+ *   signals follow the project's setting; `data-autocapture="false"` turns them off too.
  */
 import type { ConsentChoice, Host } from "./consent/types";
 import { createMira, type Mira, type MiraOptions } from "./mira";
 import { replayControl } from "./replay/control";
 import { scriptLoader } from "./replay/script-loader";
+import { siblingLoader } from "./sibling";
+import { type CreateSignals, signalsControl } from "./signals/control";
+
+/** The signals file's Subresource Integrity hash, set by the build (build.ts); none in tests. */
+declare const MIRA_SIGNALS_INTEGRITY: string | undefined;
 
 type Command =
   | "init"
@@ -89,6 +95,14 @@ function boot() {
     window as unknown as Host,
     undefined,
     replayControl(scriptLoader(script?.src, document)),
+    signalsControl(
+      siblingLoader<CreateSignals>(
+        script?.src,
+        document,
+        "signals",
+        typeof MIRA_SIGNALS_INTEGRITY === "string" ? MIRA_SIGNALS_INTEGRITY : undefined,
+      ),
+    ),
   );
 
   const run = (command: Command, args: unknown[]): unknown => {

@@ -1,6 +1,6 @@
 {
   "name": "@mirafive/web",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "MIRA FIVE browser SDK: consent-aware analytics and revenue attribution. Follows your consent banner, captures pageviews and engagement, about 11 kB gzip; session recording in a separate file. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",
@@ -38,6 +38,7 @@
     "./mira.js": "./dist/mira.js",
     "./mira-shopify-pixel.js": "./dist/mira-shopify-pixel.js",
     "./mira-recorder.js": "./dist/mira-recorder.js",
+    "./mira-signals.js": "./dist/mira-signals.js",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -54,7 +55,7 @@
     "typecheck": "bun check"
   },
   "dependencies": {
-    "@mirafive/protocol": "^2.5.0"
+    "@mirafive/protocol": "^2.6.0"
   },
   "devDependencies": {
     "@rrweb/record": "2.2.2",

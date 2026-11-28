@@ -26,12 +26,19 @@ for (const entry of entries) {
   const head = (await Bun.file(`${dir}/${entry}`).text()).trimStart();
   (head.startsWith('"use client"') ? client : rest).push(`${dir}/${entry}`);
 }
-/** The npm entry imports the recorder at runtime only: it stays a chunk of its own (built below). */
+/**
+ * The npm entry imports the recorder and the signals detector at runtime only: each stays a chunk
+ * of its own (built below).
+ */
 const recorderApart: BunPlugin = {
   name: "recorder-apart",
   setup(bundler) {
     bundler.onResolve({ filter: /^\.\/replay\/recorder$/ }, () => ({
       path: "./replay/recorder.js",
+      external: true,
+    }));
+    bundler.onResolve({ filter: /^\.\/signals\/detector$/ }, () => ({
+      path: "./signals/detector.js",
       external: true,
     }));
   },
@@ -74,6 +81,21 @@ const recorderChunk = await Bun.build({
 });
 if (!recorderChunk.success) {
   for (const log of recorderChunk.logs) console.error(log);
+  process.exit(1);
+}
+
+// The signals detector for npm: its own chunk, like the recorder's.
+const signalsChunk = await Bun.build({
+  entrypoints: [`${dir}/src/signals/detector.ts`],
+  root: `${dir}/src`,
+  outdir: `${dir}/dist`,
+  format: "esm",
+  target: "browser",
+  external: ["@mirafive/protocol"],
+  sourcemap: "linked",
+});
+if (!signalsChunk.success) {
+  for (const log of signalsChunk.logs) console.error(log);
   process.exit(1);
 }
 
@@ -126,6 +148,22 @@ if (!recorder.success) {
 const recorderBytes = await Bun.file(`${dir}/dist/mira-recorder.js`).bytes();
 const integrity = `sha384-${new Bun.CryptoHasher("sha384").update(recorderBytes).digest("base64")}`;
 
+// The signals detector for the script tag, before mira.js too, for the same reason.
+const signalsScript = await Bun.build({
+  entrypoints: [`${dir}/src/signals/signals-script.ts`],
+  outdir: `${dir}/dist`,
+  naming: "mira-signals.js",
+  format: "iife",
+  target: "browser",
+  minify: true,
+});
+if (!signalsScript.success) {
+  for (const log of signalsScript.logs) console.error(log);
+  process.exit(1);
+}
+const signalsBytes = await Bun.file(`${dir}/dist/mira-signals.js`).bytes();
+const signalsIntegrity = `sha384-${new Bun.CryptoHasher("sha384").update(signalsBytes).digest("base64")}`;
+
 const script = await Bun.build({
   entrypoints: [`${dir}/src/snippet.ts`],
   outdir: `${dir}/dist`,
@@ -133,7 +171,10 @@ const script = await Bun.build({
   format: "iife",
   target: "browser",
   minify: true,
-  define: { MIRA_RECORDER_INTEGRITY: JSON.stringify(integrity) },
+  define: {
+    MIRA_RECORDER_INTEGRITY: JSON.stringify(integrity),
+    MIRA_SIGNALS_INTEGRITY: JSON.stringify(signalsIntegrity),
+  },
 });
 if (!script.success) {
   for (const log of script.logs) console.error(log);
@@ -161,8 +202,9 @@ const kb = (size: number) => `${(size / 1024).toFixed(2)} kB`;
 const BUDGETS: Record<string, number> = {
   "mira-shopify-pixel.js": 12_288,
   "mira-recorder.js": 40_960,
+  "mira-signals.js": 8_192,
 };
-for (const file of ["mira.js", "mira-shopify-pixel.js", "mira-recorder.js"]) {
+for (const file of ["mira.js", "mira-shopify-pixel.js", "mira-recorder.js", "mira-signals.js"]) {
   const bytes = await Bun.file(`${dir}/dist/${file}`).bytes();
   const gzip = Bun.gzipSync(bytes, { level: 9 }).length;
   console.log(`dist/${file}  ${kb(bytes.length)} min  ${kb(gzip)} gzip (${gzip} bytes)`);
@@ -172,9 +214,14 @@ for (const file of ["mira.js", "mira-shopify-pixel.js", "mira-recorder.js"]) {
     process.exit(1);
   }
 }
-// The script tag must not carry the recorder.
-if ((await Bun.file(`${dir}/dist/mira.js`).text()).includes("rr-block")) {
+// The script tag must not carry the recorder or the signals detector.
+const base = await Bun.file(`${dir}/dist/mira.js`).text();
+if (base.includes("rr-block")) {
   console.error("dist/mira.js contains the recorder");
+  process.exit(1);
+}
+if (base.includes("$rage_click")) {
+  console.error("dist/mira.js contains the signals detector");
   process.exit(1);
 }
 

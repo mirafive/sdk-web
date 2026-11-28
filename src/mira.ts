@@ -28,6 +28,7 @@ import {
 import { buildContext, readClientHints, type ClientHints, type PageInfo } from "./context";
 import { shopifyStorefront } from "./shopify/storefront";
 import type { ReplayControl, ReplayFactory } from "./replay/control";
+import type { Signals, SignalsFactory } from "./signals/control";
 import { createStore, KEYS } from "./storage";
 import { Transport, type QueuedEvent } from "./transport";
 
@@ -77,6 +78,11 @@ export interface AutocaptureOptions {
   downloads?: boolean;
   /** `$form_submit` with the form's id, name and action path. Never field values. */
   forms?: boolean;
+  /**
+   * Behavior signals (rage and dead clicks, abandoned forms, errors, slow pages) when the project
+   * has them on: a file of their own, loaded only then.
+   */
+  signals?: boolean;
 }
 
 export interface IdentifyOptions {
@@ -165,12 +171,15 @@ export function createMira<Events extends EventMap = EventMap>(
    * pixel mode passes none, so it never records.
    */
   replayFactory?: ReplayFactory,
+  /** Behavior signals: how the detector file loads; pixel mode passes none. */
+  signalsFactory?: SignalsFactory,
 ): Mira<Events> {
   let started = false;
   let debug = false;
   const early: (() => void)[] = [];
   let transport: Transport | undefined;
   let replay: ReplayControl | undefined;
+  let signals: Signals | undefined;
 
   let status: ConsentStatus = UNKNOWN;
   let anonymousId: string | undefined;
@@ -496,24 +505,36 @@ export function createMira<Events extends EventMap = EventMap>(
       }),
       warn,
     });
+    const autocapture = settings.autocapture ?? true;
+    const on = (flag: keyof AutocaptureOptions) =>
+      autocapture === true || (autocapture !== false && autocapture[flag] !== false);
+    signals = on("signals")
+      ? signalsFactory?.({
+          host,
+          analytics,
+          track: (name, properties, url) =>
+            enqueue("track", name, { properties }, url ? { ...pageNow(), url } : undefined),
+        })
+      : undefined;
     transport = new Transport({
       host: origin,
       key: settings.key,
       fetch: send,
       beacon,
       persist,
-      onAnswer: replay && ((body) => replay?.answer(body)),
+      onAnswer: (body) => {
+        replay?.answer(body);
+        signals?.answer(body);
+      },
       onError: (message) => warn(message),
     });
     started = true;
 
-    const autocapture = settings.autocapture ?? true;
-    const on = (flag: keyof AutocaptureOptions) =>
-      autocapture === true || (autocapture !== false && autocapture[flag] !== false);
-
     // Page hide is the last moment we can send. `pagehide` covers bfcache and Safari, where
     // `visibilitychange` is not always fired on unload.
-    const leave = () => {
+    const leave = (left?: unknown) => {
+      // Signals first: what the page leaves behind (a form, a slow page) goes with the beacon.
+      signals?.hide(left);
       reportEngagement(true);
       transport?.beacon();
       persistNow();
