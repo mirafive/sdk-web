@@ -1,5 +1,5 @@
 import { fromPurposes } from "./tcf";
-import type { ConsentAdapter, ConsentStatus } from "./types";
+import type { ConsentAdapter, ConsentStatus, Host } from "./types";
 
 /**
  * consentmanager.net, through its `__cmp` API (verified against
@@ -39,9 +39,12 @@ export function fromCmpData(data: CmpData): ConsentStatus {
   };
 }
 
+/** consentmanager is on the page: its API (or the stub that queues calls for it). */
+export const detectConsentmanager = (host: Host) => typeof host.__cmp === "function";
+
 export const consentmanager: ConsentAdapter = {
   name: "consentmanager",
-  detect: (host) => typeof host.__cmp === "function",
+  detect: detectConsentmanager,
   subscribe(host, emit) {
     const api = host.__cmp as CmpApi;
     const read = () => {

@@ -1,4 +1,4 @@
-import { listen, MIRA_SERVICE, type ConsentAdapter } from "./types";
+import { listen, MIRA_SERVICE, type ConsentAdapter, type Host } from "./types";
 
 /**
  * CCM19 (verified against https://docs.ccm19.com/api/javascript-apis/): the global `CCM` exposes
@@ -16,11 +16,14 @@ interface Ccm {
   acceptedEmbeddings?: { id?: string; name?: string }[];
 }
 
+/** CCM19 is on the page: its global or its script. */
+export const detectCcm19 = (host: Host) =>
+  Boolean(host.CCM) ||
+  Boolean(host.document.querySelector("script[src*='ccm19'], script[src*='/ccm/public/']"));
+
 export const ccm19: ConsentAdapter = {
   name: "ccm19",
-  detect: (host) =>
-    Boolean(host.CCM) ||
-    Boolean(host.document.querySelector("script[src*='ccm19'], script[src*='/ccm/public/']")),
+  detect: detectCcm19,
   subscribe(host, emit) {
     const read = () => {
       const ccm = host.CCM as Ccm | undefined;

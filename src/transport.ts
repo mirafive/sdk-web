@@ -51,157 +51,101 @@ type Outcome = "sent" | "drop" | "retry";
  *   only fail again, so the batch is dropped. Its number stays used: the gap is the lost batch.
  * - Queue size and event age are capped, so a site that is offline for a day cannot fill memory.
  */
-export class Transport {
-  private queue: QueuedEvent[] = [];
-  /** The batch in flight, or the failed one waiting for its retry. */
-  private held: Batch | undefined;
-  private inFlight = false;
-  /** Random per SDK instance (one page load), memory only: never stored, never on an event. */
-  private readonly stream = uuidv7();
-  private seq = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private failures = 0;
-  private retryAt = 0;
-  private running: Promise<void> | undefined;
-  /** Held while the page is prerendered: nothing leaves before the person actually sees it. */
-  paused = false;
-
-  private readonly options: TransportOptions;
-
-  constructor(options: TransportOptions) {
-    this.options = options;
-  }
-
-  get size() {
-    return this.queue.length + (this.held?.events.length ?? 0);
-  }
-
-  enqueue(event: QueuedEvent) {
-    this.queue.push(event);
-    if (this.queue.length > LIMITS.maxQueue)
-      this.queue.splice(0, this.queue.length - LIMITS.maxQueue);
-    this.changed();
-    this.schedule(this.queue.length >= LIMITS.batchSize ? 0 : LIMITS.batchDelayMs);
-  }
-
+export interface Transport {
+  enqueue(event: QueuedEvent): void;
   /** Adds events restored from storage, skipping any that are already queued. */
-  restore(events: QueuedEvent[]) {
-    const known = new Set(this.pending().map((event) => event.event_id));
-    const fresh = events.filter((event) => event?.event_id && !known.has(event.event_id));
-    if (!fresh.length) return;
-    this.queue.unshift(...fresh);
-    this.schedule(LIMITS.batchDelayMs);
-  }
-
+  restore(events: QueuedEvent[]): void;
   /** Sends everything now (respecting a pending backoff). Resolves when the queue is empty or a send failed. */
-  flush(): Promise<void> {
-    clearTimeout(this.timer);
-    this.timer = undefined;
-    this.running ??= this.drain().finally(() => {
-      this.running = undefined;
-    });
-    return this.running;
-  }
-
+  flush(): Promise<void>;
   /**
    * Last chance on page hide: hand the queue to `sendBeacon`, which survives the page. The beacon
    * goes to `/v1/p` as `text/plain`, a "simple" request without a CORS preflight.
    */
-  beacon() {
-    if (this.paused || !this.options.beacon) return;
-    this.dropExpired();
-    // A failed batch waiting for its retry goes first, with its own number. A batch in flight is
-    // left to its keepalive fetch.
-    if (this.held && !this.inFlight) {
-      if (!this.sendBeacon(this.held)) return this.changed();
-      this.held = undefined;
-    }
-    while (this.queue.length) {
-      const batch = { seq: this.seq + 1, events: this.queue.slice(0, LIMITS.batchSize) };
-      // The browser refused (quota full): keep the rest for the persisted queue and the next page.
-      // The number is only used once the beacon is accepted, so a refusal leaves no gap.
-      if (!this.sendBeacon(batch)) break;
-      this.seq = batch.seq;
-      this.queue.splice(0, batch.events.length);
-    }
-    this.changed();
+  beacon(): void;
+  /** Holds every event while the page is prerendered: nothing leaves before the person sees it. */
+  pause(): void;
+  resume(): void;
+  /** Events not yet confirmed. */
+  readonly size: number;
+}
+
+export function createTransport(options: TransportOptions): Transport {
+  let queue: QueuedEvent[] = [];
+  /** The batch in flight, or the failed one waiting for its retry. */
+  let held: Batch | undefined;
+  let inFlight = false;
+  /** Random per SDK instance (one page load), memory only: never stored, never on an event. */
+  const stream = uuidv7();
+  let seq = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let failures = 0;
+  let retryAt = 0;
+  let running: Promise<void> | undefined;
+  let paused = false;
+
+  /** Every event not yet confirmed, in order. */
+  const pending = (): QueuedEvent[] => [...(held?.events ?? []), ...queue];
+  const changed = () => options.persist?.(pending());
+
+  const body = (batch: Batch) =>
+    JSON.stringify({
+      key: options.key,
+      sent_at: new Date().toISOString(),
+      stream,
+      seq: batch.seq,
+      events: batch.events,
+    });
+
+  function dropExpired() {
+    const oldest = Date.now() - LIMITS.maxAgeMs;
+    const before = queue.length;
+    queue = queue.filter((event) => Date.parse(event.timestamp) >= oldest);
+    if (queue.length !== before) changed();
   }
 
-  /** Forgets every queued event (used by tests and on hard reset). */
-  clear() {
-    this.queue = [];
-    this.held = undefined;
-    this.changed();
-  }
-
-  resume() {
-    this.paused = false;
-    if (this.size) this.schedule(0);
-  }
-
-  private schedule(delay: number) {
-    if (this.paused) return;
-    const at = Math.max(Date.now() + delay, this.retryAt);
-    if (this.timer !== undefined) {
+  function schedule(delay: number) {
+    if (paused) return;
+    const at = Math.max(Date.now() + delay, retryAt);
+    if (timer !== undefined) {
       // Never postpone an earlier send; only bring a later one forward (when the batch filled up).
       if (delay > 0) return;
-      clearTimeout(this.timer);
+      clearTimeout(timer);
     }
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      void this.flush();
+    timer = setTimeout(() => {
+      timer = undefined;
+      void flush();
     }, at - Date.now());
   }
 
-  private async drain() {
-    while ((this.held || this.queue.length) && !this.paused) {
-      if (Date.now() < this.retryAt) {
-        this.schedule(0);
-        return;
-      }
-      if (!this.held) {
-        this.dropExpired();
-        if (!this.queue.length) return;
-        this.held = { seq: (this.seq += 1), events: this.queue.splice(0, LIMITS.batchSize) };
-      }
-      const batch = this.held;
-      this.inFlight = true;
-      // One request at a time, on purpose: order is kept and a failing ingest is not hammered.
-      // oxlint-disable-next-line no-await-in-loop
-      const outcome = await this.send(batch);
-      this.inFlight = false;
-      if (outcome === "retry") {
-        this.changed();
-        this.schedule(0);
-        return;
-      }
-      // Sent, or dropped for good. A beacon on page hide may have taken it meanwhile.
-      if (this.held === batch) this.held = undefined;
-      this.changed();
-    }
+  /** Exponential backoff with full jitter, at least what the server asked for in `retry-after`. */
+  function backoff(minimumMs: number): Outcome {
+    failures += 1;
+    const ceiling = Math.min(LIMITS.maxBackoffMs, 1000 * 2 ** failures);
+    retryAt = Date.now() + Math.max(minimumMs, Math.random() * ceiling);
+    return "retry";
   }
 
-  private async send(batch: Batch): Promise<Outcome> {
-    const body = this.body(batch);
+  async function send(batch: Batch): Promise<Outcome> {
+    const text = body(batch);
     try {
-      const response = await this.options.fetch(`${this.options.host}/v1/batch`, {
+      const response = await options.fetch(`${options.host}/v1/batch`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body,
+        body: text,
         // `keepalive` lets the request finish when the page navigates away mid-send.
-        keepalive: body.length <= LIMITS.keepaliveBytes,
+        keepalive: text.length <= LIMITS.keepaliveBytes,
         credentials: "omit",
         signal: AbortSignal.timeout?.(LIMITS.requestTimeoutMs),
       });
       if (response.ok) {
-        this.failures = 0;
-        this.retryAt = 0;
-        if (response.status === 202 && this.options.onAnswer) {
+        failures = 0;
+        retryAt = 0;
+        if (response.status === 202 && options.onAnswer) {
           // The answer only steers recording: a body that cannot be read, or a hook that throws,
           // never turns a delivered batch into a retry.
-          const body: unknown = await response.json().catch(() => undefined);
+          const answer: unknown = await response.json().catch(() => undefined);
           try {
-            this.options.onAnswer(body);
+            options.onAnswer(answer);
           } catch {
             // Swallowed: recording is never in the way of events.
           }
@@ -209,57 +153,106 @@ export class Transport {
         return "sent";
       }
       if (response.status === 429 || response.status === 408 || response.status >= 500) {
-        return this.backoff(Number(response.headers.get("retry-after")) * 1000 || 0);
+        return backoff(Number(response.headers.get("retry-after")) * 1000 || 0);
       }
-      this.options.onError?.(`batch dropped (${response.status})`);
+      options.onError?.(`batch dropped (${response.status})`);
       return "drop";
     } catch {
-      return this.backoff(0);
+      return backoff(0);
     }
   }
 
-  /** Exponential backoff with full jitter, at least what the server asked for in `retry-after`. */
-  private backoff(minimumMs: number): Outcome {
-    this.failures += 1;
-    const ceiling = Math.min(LIMITS.maxBackoffMs, 1000 * 2 ** this.failures);
-    this.retryAt = Date.now() + Math.max(minimumMs, Math.random() * ceiling);
-    return "retry";
-  }
-
   /** Hands one batch to `sendBeacon`; false when it is too large or the browser refused it. */
-  private sendBeacon(batch: Batch): boolean {
-    const body = this.body(batch);
-    if (body.length > LIMITS.keepaliveBytes) return false;
+  function sendBeacon(batch: Batch): boolean {
+    const text = body(batch);
+    if (text.length > LIMITS.keepaliveBytes) return false;
     try {
-      return this.options.beacon?.(`${this.options.host}/v1/p`, body) === true;
+      return options.beacon?.(`${options.host}/v1/p`, text) === true;
     } catch {
       return false;
     }
   }
 
-  private body(batch: Batch) {
-    return JSON.stringify({
-      key: this.options.key,
-      sent_at: new Date().toISOString(),
-      stream: this.stream,
-      seq: batch.seq,
-      events: batch.events,
+  async function drain() {
+    while ((held || queue.length) && !paused) {
+      if (Date.now() < retryAt) {
+        schedule(0);
+        return;
+      }
+      if (!held) {
+        dropExpired();
+        if (!queue.length) return;
+        held = { seq: (seq += 1), events: queue.splice(0, LIMITS.batchSize) };
+      }
+      const batch = held;
+      inFlight = true;
+      // One request at a time, on purpose: order is kept and a failing ingest is not hammered.
+      // oxlint-disable-next-line no-await-in-loop
+      const outcome = await send(batch);
+      inFlight = false;
+      if (outcome === "retry") {
+        changed();
+        schedule(0);
+        return;
+      }
+      // Sent, or dropped for good. A beacon on page hide may have taken it meanwhile.
+      if (held === batch) held = undefined;
+      changed();
+    }
+  }
+
+  function flush(): Promise<void> {
+    clearTimeout(timer);
+    timer = undefined;
+    running ??= drain().finally(() => {
+      running = undefined;
     });
+    return running;
   }
 
-  private dropExpired() {
-    const oldest = Date.now() - LIMITS.maxAgeMs;
-    const before = this.queue.length;
-    this.queue = this.queue.filter((event) => Date.parse(event.timestamp) >= oldest);
-    if (this.queue.length !== before) this.changed();
-  }
-
-  /** Every event not yet confirmed, in order. */
-  private pending(): QueuedEvent[] {
-    return [...(this.held?.events ?? []), ...this.queue];
-  }
-
-  private changed() {
-    this.options.persist?.(this.pending());
-  }
+  return {
+    enqueue(event) {
+      queue.push(event);
+      if (queue.length > LIMITS.maxQueue) queue.splice(0, queue.length - LIMITS.maxQueue);
+      changed();
+      schedule(queue.length >= LIMITS.batchSize ? 0 : LIMITS.batchDelayMs);
+    },
+    restore(events) {
+      const known = new Set(pending().map((event) => event.event_id));
+      const fresh = events.filter((event) => event?.event_id && !known.has(event.event_id));
+      if (!fresh.length) return;
+      queue.unshift(...fresh);
+      schedule(LIMITS.batchDelayMs);
+    },
+    flush,
+    beacon() {
+      if (paused || !options.beacon) return;
+      dropExpired();
+      // A failed batch waiting for its retry goes first, with its own number. A batch in flight is
+      // left to its keepalive fetch.
+      if (held && !inFlight) {
+        if (!sendBeacon(held)) return changed();
+        held = undefined;
+      }
+      while (queue.length) {
+        const batch = { seq: seq + 1, events: queue.slice(0, LIMITS.batchSize) };
+        // The browser refused (quota full): keep the rest for the persisted queue and the next page.
+        // The number is only used once the beacon is accepted, so a refusal leaves no gap.
+        if (!sendBeacon(batch)) break;
+        seq = batch.seq;
+        queue.splice(0, batch.events.length);
+      }
+      changed();
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      if (pending().length) schedule(0);
+    },
+    get size() {
+      return pending().length;
+    },
+  };
 }

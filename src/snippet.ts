@@ -20,16 +20,21 @@
  * - `data-autocapture="false"`: turn off all autocapture. `data-spa`, `data-engagement`,
  *   `data-outbound`, `data-downloads`, `data-forms` set to `"false"` turn off one part. Behavior
  *   signals follow the project's setting; `data-autocapture="false"` turns them off too.
+ *
+ * What only some pages need is a file of its own beside this one, of the same release, cached for a
+ * year and loaded only on a page that needs it: the CMP adapters' subscriptions once a banner is
+ * detected, Shopify mode's parts for `data-consent="shopify"`, the recorder for a recorded session
+ * and the signals detector for a project that detects them.
  */
+import { watchNavigation } from "./autocapture";
+import { watchEngagement, watchInteractions } from "./behavior";
+import { lazyAdapters, type ConsentFile } from "./consent/lazy";
 import type { ConsentChoice, Host } from "./consent/types";
-import { createMira, type Mira, type MiraOptions } from "./mira";
+import { createCore, type Mira, type MiraOptions, type ShopifyParts } from "./core";
 import { replayControl } from "./replay/control";
 import { scriptLoader } from "./replay/script-loader";
 import { siblingLoader } from "./sibling";
 import { type CreateSignals, signalsControl } from "./signals/control";
-
-/** The signals file's Subresource Integrity hash, set by the build (build.ts); none in tests. */
-declare const MIRA_SIGNALS_INTEGRITY: string | undefined;
 
 type Command =
   | "init"
@@ -88,22 +93,19 @@ function boot() {
   const stubQueue = Array.from((host.mira as Stub | undefined)?.q ?? []);
   // Only while this script runs for the first time does the page say where it came from.
   const script = document.currentScript as HTMLScriptElement | null;
-  // The page's window, named so a test can stand in for it. A recorded session loads the recorder
-  // file of this release from beside this script.
-  const instance: Mira = createMira(
-    undefined,
-    window as unknown as Host,
-    undefined,
-    replayControl(scriptLoader(script?.src, document)),
-    signalsControl(
-      siblingLoader<CreateSignals>(
-        script?.src,
-        document,
-        "signals",
-        typeof MIRA_SIGNALS_INTEGRITY === "string" ? MIRA_SIGNALS_INTEGRITY : undefined,
-      ),
-    ),
-  );
+  const src = script?.src;
+  // The files of this release beside this script, each loaded the first time it is needed.
+  const instance: Mira = createCore(undefined, window as unknown as Host, {
+    replay: replayControl(scriptLoader(src, document)),
+    signals: signalsControl(siblingLoader<CreateSignals>(src, document, "signals")),
+    adapters: lazyAdapters(siblingLoader<ConsentFile>(src, document, "consent")),
+    shopify: siblingLoader<ShopifyParts>(src, document, "shopify"),
+    capture: {
+      engagement: watchEngagement,
+      interactions: watchInteractions,
+      navigation: watchNavigation,
+    },
+  });
 
   const run = (command: Command, args: unknown[]): unknown => {
     const call = instance[command] as ((...values: unknown[]) => unknown) | undefined;

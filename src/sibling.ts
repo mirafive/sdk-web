@@ -2,9 +2,14 @@ import { VERSION } from "./version";
 
 /**
  * Files of the same release served beside the script tag's `mira.js` (the recorder, the signals
- * detector): where they are, where they register, and how they load. One name per release, so
- * files of two releases never mix.
+ * detector, the CMP adapters' subscriptions, Shopify mode's parts): where they are, where they
+ * register, and how they load. One name per release, so files of two releases never mix.
  */
+
+/** The siblings' Subresource Integrity hashes by name, set by the build (build.ts); none in tests. */
+declare const MIRA_INTEGRITY: Readonly<Record<string, string>> | undefined;
+const INTEGRITY: Readonly<Record<string, string>> =
+  typeof MIRA_INTEGRITY === "object" ? MIRA_INTEGRITY : {};
 
 /** Where a sibling file registers itself. */
 export const siblingSlot = (name: string, version: string) =>
@@ -39,7 +44,7 @@ export function siblingLoader<T>(
   scriptSrc: string | undefined,
   document: Document,
   name: string,
-  integrity: string | undefined,
+  integrity: string | undefined = INTEGRITY[name],
 ): () => Promise<T> {
   let loading: Promise<T> | undefined;
   return () =>

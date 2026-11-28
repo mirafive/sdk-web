@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type { ConsentAdapter, ConsentStatus } from "../consent/types";
 import { createMira, type MiraOptions } from "../mira";
 import { fakeHost, tick } from "../test/fake-host";
-import { Transport } from "../transport";
+import { createTransport } from "../transport";
 import {
   LIVE_KEY,
   REPLAY_KEY,
@@ -314,7 +314,7 @@ describe("the transport hands over the answer", () => {
     const fake = fakeHost();
     fake.answer = recordedAnswer;
     fake.responses.push(status);
-    const transport = new Transport({
+    const transport = createTransport({
       host: HOST,
       key: KEY,
       fetch: fake.host.fetch,

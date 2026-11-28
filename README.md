@@ -3,11 +3,11 @@
 The MIRA FIVE browser SDK: consent-aware analytics and revenue attribution for websites and web
 apps. It follows the site's consent banner on its own, works cookieless until consent is given,
 captures pageviews (also in single-page apps), engagement, outbound clicks, downloads and form
-submits, and never throws into your page. About 11 kB gzip with every consent adapter; no
-dependencies besides `@mirafive/protocol`. For a project that records sessions, a separate
-recorder file (about 29 kB gzip) loads only when the server records the visit and the visitor
-allows analytics; for a project that detects behavior signals, a separate detector file (about
-7 kB gzip) loads when the server says so.
+submits, and never throws into your page. The script tag is about 8.5 kB gzip; no dependencies
+besides `@mirafive/protocol`. What only some pages need is a file of its own that loads only on
+those pages: the consent banners' code once a banner is detected, Shopify mode on a storefront,
+the session recorder for a recorded visit, the behavior signals detector for a project that
+detects them ([Script files](#script-files)).
 
 Using a framework? [`@mirafive/react`](https://github.com/mirafive/sdk-react),
 [`@mirafive/next`](https://github.com/mirafive/sdk-next),
@@ -304,7 +304,10 @@ nothing and buffers nothing, and no request goes to the recording routes.
 
 The SDK looks for these CMPs in this order and follows the first one it finds. Until the CMP
 answers, the state is `unknown` (T0). The first automatic pageview waits up to 1 s for that answer,
-so a returning visitor's pageview already carries their consent.
+so a returning visitor's pageview already carries their consent. The script tag carries only how
+each banner is detected; the code that follows a banner is `mira-consent@<version>.js`, loaded
+once one is found ([Script files](#script-files)). A page without one of these banners never
+fetches it.
 
 | CMP                               | Read through                                                                     | Mapping                                                                                                                                                                                                             |
 | --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -328,7 +331,8 @@ decision from the start, so Shopify's "allowed" never writes to the device befor
 answered it. A banner that only appears later, through a tag manager, takes over then, after
 Shopify's answer was already used and storage was written. Without the
 option a Shopify page behaves like any other (no Shopify adapter, no cookie, no cart attribute).
-With npm, `consent: 'shopify'` does the same; nothing else is needed.
+With npm, `consent: 'shopify'` does the same; nothing else is needed. The script tag loads Shopify
+mode's code, `mira-shopify@<version>.js`, only with the option ([Script files](#script-files)).
 
 With analytics consent the tag writes the visitor's id to the cookie `mira_aid` and to the cart
 attribute `_mira_aid`. Shopify copies a cart attribute to the order (`note_attributes`), so a server
@@ -381,6 +385,29 @@ theme's script tag owns storefront pageviews; pass `pages: 'all'` in a shop with
 waits until a page URL is known, because the pixel's requests carry `Origin: null` and the ingest
 accepts those only with a page on the project's domains. It never sends money: a public key cannot
 create revenue, so revenue comes from the shop's server.
+
+## Script files
+
+The script tag is `mira.js`. Every other file belongs to one release, has the version in its name
+(`/sdk/mira.js`, `/sdk/v2/mira.js` and `/sdk/mira@2.5.0.js` all load `/sdk/mira-consent@2.5.0.js`
+from beside themselves), never changes, and is cached for a year. `mira.js` carries their integrity
+hashes, so a page that pins `mira.js` with Subresource Integrity pins every file it loads.
+
+| File                         | Loaded                                                         | gzip    |
+| ---------------------------- | -------------------------------------------------------------- | ------- |
+| `mira.js`                    | on every page                                                  | 8.5 kB  |
+| `mira-consent@<version>.js`  | once a banner from the table above is detected                 | 1.9 kB  |
+| `mira-shopify@<version>.js`  | with `data-consent="shopify"`                                  | 1.7 kB  |
+| `mira-signals@<version>.js`  | when the project detects behavior signals                      | 6.2 kB  |
+| `mira-recorder@<version>.js` | when the server records the visit, with analytics consent      | 28.6 kB |
+| `mira-shopify-pixel.js`      | in a Shopify custom pixel ([Shopify](#shopify)), not beside it | 7.4 kB  |
+
+A first-party proxy forwards `/sdk/mira-*@<version>.js` like the script. A copied, self-hosted
+`mira.js` needs the files beside it under those names (`dist/mira-consent.js` as
+`mira-consent@2.5.0.js`, and so on); without them it follows no banner and no Shopify consent (it
+stays at T0), records nothing and detects no signals. With npm, `createMira` has every part at
+hand except the recorder and the detector, which it imports dynamically, so your bundler splits
+them into chunks of their own.
 
 ## Delivery
 

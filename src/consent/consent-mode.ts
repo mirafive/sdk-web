@@ -1,6 +1,6 @@
 import type { ConsentState } from "@mirafive/protocol";
 
-import type { ConsentAdapter, ConsentStatus } from "./types";
+import type { ConsentAdapter, ConsentStatus, Host } from "./types";
 
 /**
  * Google Consent Mode v2, read from the `dataLayer` (fallback when no CMP is detected).
@@ -20,8 +20,14 @@ interface Seen {
   updated: boolean;
 }
 
+/** `gtag('consent', 'default' | 'update', {...})`, as it lies in the layer. */
 const isCommand = (entry: unknown): entry is ArrayLike<unknown> =>
-  Boolean(entry) && typeof entry === "object" && (entry as ArrayLike<unknown>)[0] === "consent";
+  Boolean(entry) &&
+  typeof entry === "object" &&
+  (entry as ArrayLike<unknown>)[0] === "consent" &&
+  ((entry as ArrayLike<unknown>)[1] === "default" ||
+    (entry as ArrayLike<unknown>)[1] === "update") &&
+  Boolean((entry as ArrayLike<unknown>)[2]);
 
 export function fromDataLayer(entries: ArrayLike<unknown>): ConsentStatus | undefined {
   const seen: Record<string, Seen> = {};
@@ -29,8 +35,7 @@ export function fromDataLayer(entries: ArrayLike<unknown>): ConsentStatus | unde
   for (const entry of Array.from(entries)) {
     if (!isCommand(entry)) continue;
     const kind = entry[1];
-    const values = entry[2] as Record<string, unknown> | undefined;
-    if ((kind !== "default" && kind !== "update") || !values) continue;
+    const values = entry[2] as Record<string, unknown>;
     found = true;
     for (const [key, value] of Object.entries(values)) {
       if (value === "granted" || value === "denied") {
@@ -51,11 +56,14 @@ export function fromDataLayer(entries: ArrayLike<unknown>): ConsentStatus | unde
   return { analytics: read("analytics_storage"), marketing: read("ad_storage", "ad_user_data") };
 }
 
+/** The page's `dataLayer` holds a consent command (what `fromDataLayer` reads). */
+export const detectConsentMode = (host: Host) =>
+  Array.isArray(host.dataLayer) && (host.dataLayer as unknown[]).some(isCommand);
+
 export const consentMode: ConsentAdapter = {
   name: "consent-mode",
   fallback: true,
-  detect: (host) =>
-    Array.isArray(host.dataLayer) && fromDataLayer(host.dataLayer as unknown[]) !== undefined,
+  detect: detectConsentMode,
   subscribe(host, emit) {
     const layer = host.dataLayer as unknown[] & { push: (...items: unknown[]) => number };
     const report = () => {

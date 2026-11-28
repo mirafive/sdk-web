@@ -2,9 +2,6 @@ import { siblingLoader, siblingSlot, siblingUrl } from "../sibling";
 import { VERSION } from "../version";
 import type { CreateReplay, RecorderLoader } from "./control";
 
-/** The recorder file's Subresource Integrity hash, set by the build (build.ts); none in tests. */
-declare const MIRA_RECORDER_INTEGRITY: string | undefined;
-
 /** Where the recorder file registers itself: one name per release, so files of two releases never mix. */
 export const recorderSlot = (version: string) => siblingSlot("recorder", version);
 
@@ -18,9 +15,4 @@ export const recorderUrl = (scriptSrc: string, version: string = VERSION) =>
 
 /** Loads the recorder as a script beside this one, checked by its integrity hash, once. */
 export const scriptLoader = (scriptSrc: string | undefined, document: Document): RecorderLoader =>
-  siblingLoader<CreateReplay>(
-    scriptSrc,
-    document,
-    "recorder",
-    typeof MIRA_RECORDER_INTEGRITY === "string" ? MIRA_RECORDER_INTEGRITY : undefined,
-  );
+  siblingLoader<CreateReplay>(scriptSrc, document, "recorder");

@@ -2,8 +2,10 @@
  * Builds dist/: ES modules with source maps (Bun), and declarations (TypeScript) with explicit
  * `.js` extensions, so they resolve under `moduleResolution: "nodenext"` too. Dependencies and
  * peers stay external.
- * Also dist/mira.js, the script-tag bundle (IIFE, minified), with its size, and the recorder:
- * dist/mira-recorder.js for the script tag and dist/replay/recorder.js, the chunk `createMira`
+ * Also the script-tag files (IIFE, bundled by Bun, minified by terser), with their sizes:
+ * dist/mira.js and its siblings, each loaded only on a page that needs it (`mira-consent.js`,
+ * `mira-shopify.js`, `mira-recorder.js`, `mira-signals.js`), and pixel mode's
+ * `mira-shopify-pixel.js`. The recorder is also dist/replay/recorder.js, the chunk `createMira`
  * imports dynamically. Both bundle `@rrweb/record`, so the package has no dependency on it and
  * records with exactly the release whose defaults its tests pin.
  */
@@ -11,6 +13,8 @@ import type { BunPlugin } from "bun";
 import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+
+import { minify } from "terser";
 
 const dir = import.meta.dir;
 const entries = ["src/index.ts"];
@@ -130,81 +134,70 @@ for await (const file of new Bun.Glob("**/*.d.ts").scan({ cwd: `${dir}/dist` }))
   await writeFile(path, text);
 }
 
-// The recorder for the script tag, first: mira.js carries its integrity hash, so a page that pins
-// mira.js with Subresource Integrity pins the recorder with it.
-const recorder = await Bun.build({
-  entrypoints: [`${dir}/src/replay/recorder-script.ts`],
-  outdir: `${dir}/dist`,
-  naming: "mira-recorder.js",
-  format: "iife",
-  target: "browser",
-  minify: true,
-  banner: RRWEB_NOTICE,
-});
-if (!recorder.success) {
-  for (const log of recorder.logs) console.error(log);
-  process.exit(1);
-}
-const recorderBytes = await Bun.file(`${dir}/dist/mira-recorder.js`).bytes();
-const integrity = `sha384-${new Bun.CryptoHasher("sha384").update(recorderBytes).digest("base64")}`;
-
-// The signals detector for the script tag, before mira.js too, for the same reason.
-const signalsScript = await Bun.build({
-  entrypoints: [`${dir}/src/signals/signals-script.ts`],
-  outdir: `${dir}/dist`,
-  naming: "mira-signals.js",
-  format: "iife",
-  target: "browser",
-  minify: true,
-});
-if (!signalsScript.success) {
-  for (const log of signalsScript.logs) console.error(log);
-  process.exit(1);
-}
-const signalsBytes = await Bun.file(`${dir}/dist/mira-signals.js`).bytes();
-const signalsIntegrity = `sha384-${new Bun.CryptoHasher("sha384").update(signalsBytes).digest("base64")}`;
-
-const script = await Bun.build({
-  entrypoints: [`${dir}/src/snippet.ts`],
-  outdir: `${dir}/dist`,
-  naming: "mira.js",
-  format: "iife",
-  target: "browser",
-  minify: true,
-  define: {
-    MIRA_RECORDER_INTEGRITY: JSON.stringify(integrity),
-    MIRA_SIGNALS_INTEGRITY: JSON.stringify(signalsIntegrity),
-  },
-});
-if (!script.success) {
-  for (const log of script.logs) console.error(log);
-  process.exit(1);
+/**
+ * One script-tag file: an IIFE bundled by Bun and minified by terser, whose output is about 6%
+ * smaller than Bun's own, gzip and brotli alike. Comments starting with `!` (licenses) stay.
+ * Returns its Subresource Integrity hash.
+ */
+async function scriptFile(
+  entry: string,
+  naming: string,
+  options: { banner?: string; define?: Record<string, string> } = {},
+): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: [`${dir}/src/${entry}`],
+    format: "iife",
+    target: "browser",
+    ...options,
+  });
+  if (!result.success) {
+    for (const log of result.logs) console.error(log);
+    process.exit(1);
+  }
+  const output = result.outputs[0];
+  if (!output) process.exit(1);
+  const { code } = await minify(await output.text(), {
+    ecma: 2020,
+    compress: { ecma: 2020, passes: 2 },
+    mangle: true,
+    format: { ecma: 2020, comments: /^!/ },
+  });
+  if (!code) process.exit(1);
+  const bytes = new TextEncoder().encode(code);
+  await Bun.write(`${dir}/dist/${naming}`, bytes);
+  return `sha384-${new Bun.CryptoHasher("sha384").update(bytes).digest("base64")}`;
 }
 
+// The siblings first: mira.js carries their integrity hashes, so a page that pins mira.js with
+// Subresource Integrity pins every file it loads with it.
+const integrity = {
+  recorder: await scriptFile("replay/recorder-script.ts", "mira-recorder.js", {
+    banner: RRWEB_NOTICE,
+  }),
+  signals: await scriptFile("signals/signals-script.ts", "mira-signals.js"),
+  consent: await scriptFile("consent/consent-script.ts", "mira-consent.js"),
+  shopify: await scriptFile("shopify/shopify-script.ts", "mira-shopify.js"),
+};
+await scriptFile("snippet.ts", "mira.js", {
+  define: { MIRA_INTEGRITY: JSON.stringify(integrity) },
+});
 // Pixel mode for Shopify custom pixels: its own file, so the script every site loads stays small.
-const pixel = await Bun.build({
-  entrypoints: [`${dir}/src/shopify/pixel-snippet.ts`],
-  outdir: `${dir}/dist`,
-  naming: "mira-shopify-pixel.js",
-  format: "iife",
-  target: "browser",
-  minify: true,
-});
-if (!pixel.success) {
-  for (const log of pixel.logs) console.error(log);
-  process.exit(1);
-}
+await scriptFile("shopify/pixel-snippet.ts", "mira-shopify-pixel.js");
+
 const kb = (size: number) => `${(size / 1024).toFixed(2)} kB`;
 /**
- * The other files' gzip budgets; CI checks `mira.js` (its budget is in ci.yml). The recorder is
- * fetched only for a recorded session, after the page has loaded.
+ * The other files' gzip budgets; CI checks `mira.js` (its budget is in ci.yml). The siblings are
+ * fetched only on a page that needs them, the recorder only for a recorded session, after the page
+ * has loaded.
  */
 const BUDGETS: Record<string, number> = {
-  "mira-shopify-pixel.js": 12_288,
+  "mira-consent.js": 3_072,
+  "mira-shopify.js": 2_048,
+  "mira-shopify-pixel.js": 9_216,
   "mira-recorder.js": 40_960,
   "mira-signals.js": 8_192,
 };
-for (const file of ["mira.js", "mira-shopify-pixel.js", "mira-recorder.js", "mira-signals.js"]) {
+for (const file of ["mira.js", ...Object.keys(BUDGETS)]) {
   const bytes = await Bun.file(`${dir}/dist/${file}`).bytes();
   const gzip = Bun.gzipSync(bytes, { level: 9 }).length;
   console.log(`dist/${file}  ${kb(bytes.length)} min  ${kb(gzip)} gzip (${gzip} bytes)`);
@@ -214,15 +207,37 @@ for (const file of ["mira.js", "mira-shopify-pixel.js", "mira-recorder.js", "mir
     process.exit(1);
   }
 }
-// The script tag must not carry the recorder or the signals detector.
-const base = await Bun.file(`${dir}/dist/mira.js`).text();
-if (base.includes("rr-block")) {
-  console.error("dist/mira.js contains the recorder");
-  process.exit(1);
-}
-if (base.includes("$rage_click")) {
-  console.error("dist/mira.js contains the signals detector");
-  process.exit(1);
+/** Text only a part has, so a file that must not carry the part must not contain it. */
+const MARKS = {
+  "the recorder": "rr-block",
+  "the signals detector": "$rage_click",
+  "the CMP adapters' subscriptions": "CookiebotOnConsentReady",
+  "Shopify mode's parts": "consent-tracking-api",
+  autocapture: "$outbound_click",
+};
+const FORBIDDEN: Record<string, (keyof typeof MARKS)[]> = {
+  "mira.js": [
+    "the recorder",
+    "the signals detector",
+    "the CMP adapters' subscriptions",
+    "Shopify mode's parts",
+  ],
+  "mira-shopify-pixel.js": [
+    "the recorder",
+    "the signals detector",
+    "the CMP adapters' subscriptions",
+    "Shopify mode's parts",
+    "autocapture",
+  ],
+};
+for (const [file, parts] of Object.entries(FORBIDDEN)) {
+  const text = await Bun.file(`${dir}/dist/${file}`).text();
+  for (const part of parts) {
+    if (text.includes(MARKS[part])) {
+      console.error(`dist/${file} contains ${part}`);
+      process.exit(1);
+    }
+  }
 }
 
 console.log(`✓ built ${manifest.name}`);

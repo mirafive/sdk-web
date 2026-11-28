@@ -1,5 +1,5 @@
 import type { ConsentAdapter, ConsentStatus, Host } from "../consent/types";
-import { createMira, type Mira, type MiraOptions } from "../mira";
+import { createCore, type Mira, type MiraOptions } from "../core";
 import { KEYS } from "../storage";
 import { VISITOR_COOKIE } from "./storefront";
 
@@ -409,7 +409,8 @@ export async function startShopifyPixel(
       autocapture: false,
       debug,
     };
-    mira = createMira(options, host, () => eventAt ?? new Date());
+    // Only the core: consent comes from Shopify (`adapter`), and a pixel captures nothing itself.
+    mira = createCore(options, host, { now: () => eventAt ?? new Date() });
     // Events that only the start's own document describes (no event yet) are reported at once.
     report({});
 

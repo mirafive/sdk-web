@@ -13,7 +13,7 @@
  * then calls that instance.
  */
 import type { Host } from "../consent/types";
-import type { Mira } from "../mira";
+import type { Mira } from "../core";
 import { eventFeed } from "./event-feed";
 import { startShopifyPixel, type ShopifyEvent, type ShopifyPixelInput } from "./pixel";
 

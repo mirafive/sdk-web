@@ -8,7 +8,7 @@
  * ```
  */
 import type { Host } from "./consent/types";
-import { createMira as createCore, type EventMap, type Mira, type MiraOptions } from "./mira";
+import { createMira as createInstance, type EventMap, type Mira, type MiraOptions } from "./mira";
 import { replayControl } from "./replay/control";
 import { signalsControl } from "./signals/control";
 
@@ -55,7 +55,7 @@ export function createMira<Events extends EventMap = EventMap>(
   options?: MiraOptions,
   host?: Host,
 ): Mira<Events> {
-  return createCore<Events>(
+  return createInstance<Events>(
     options,
     host,
     undefined,
