@@ -58,6 +58,8 @@ export interface FakeHost {
   refuseBeacons: boolean;
   /** Status codes the fake ingest answers with, in order; then 202. */
   responses: (number | "network")[];
+  /** The body of the fake ingest's answer to a request (default: every event accepted). */
+  answer?: (request: SentRequest) => unknown;
   navigate(url: string): void;
   /** Dispatches an event on the document as if it had bubbled up from `target`. */
   dispatch(type: string, target: unknown, init?: Record<string, unknown>): void;
@@ -131,13 +133,19 @@ export function fakeHost(
     },
   };
 
-  const fetch = async (url: string, init: RequestInit) => {
-    requests.push({ url, body: JSON.parse(init.body as string), keepalive: init.keepalive });
+  const fetch = async (url: string, init: RequestInit = {}) => {
+    // Recording's requests carry no JSON (a chunk is gzip, a withdrawal has no body).
+    const body = typeof init.body === "string" ? JSON.parse(init.body) : { events: [] };
+    const request: SentRequest = { url, body, keepalive: init.keepalive };
+    requests.push(request);
     const next = responses.shift() ?? 202;
     if (next === "network") throw new TypeError("Failed to fetch");
-    return new Response(JSON.stringify({ accepted: 1, duplicates: 0, rejected: [] }), {
-      status: next,
-    });
+    const answer = fake.answer?.(request) ?? {
+      accepted: body.events.length || 1,
+      duplicates: 0,
+      rejected: [],
+    };
+    return new Response(JSON.stringify(answer), { status: next });
   };
 
   const host = extend(new EventTarget(), {
@@ -158,9 +166,9 @@ export function fakeHost(
           return { model: "Pixel 9", platformVersion: "15.0.0" };
         },
       },
-      sendBeacon: (url: string, body: string) => {
+      sendBeacon: (url: string, body: string | Blob) => {
         if (fake.refuseBeacons) return false;
-        beacons.push({ url, body: JSON.parse(body) });
+        beacons.push({ url, body: typeof body === "string" ? JSON.parse(body) : { events: [] } });
         return true;
       },
     },

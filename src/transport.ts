@@ -19,6 +19,8 @@ export interface TransportOptions {
   beacon?: (url: string, body: string) => boolean;
   /** Called after every queue change with all events not yet confirmed; the core decides whether it may store them. */
   persist?: (events: QueuedEvent[]) => void;
+  /** The body of a `202`: the server's answer, with its `replay` field when it records the session. */
+  onAnswer?: (body: unknown) => void;
   onError?: (message: string) => void;
 }
 
@@ -194,6 +196,16 @@ export class Transport {
       if (response.ok) {
         this.failures = 0;
         this.retryAt = 0;
+        if (response.status === 202 && this.options.onAnswer) {
+          // The answer only steers recording: a body that cannot be read, or a hook that throws,
+          // never turns a delivered batch into a retry.
+          const body: unknown = await response.json().catch(() => undefined);
+          try {
+            this.options.onAnswer(body);
+          } catch {
+            // Swallowed: recording is never in the way of events.
+          }
+        }
         return "sent";
       }
       if (response.status === 429 || response.status === 408 || response.status >= 500) {
